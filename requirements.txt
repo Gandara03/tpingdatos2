@@ -1,0 +1,22 @@
+# Sistema de Gestión de Sensores - Dependencias
+# Trabajo Práctico - Ingeniería de Datos II - Persistencia Poliglota
+
+# MongoDB Atlas - Base de datos principal
+pymongo>=4.6.0
+
+# Neo4j Aura - Base de datos de grafos para relaciones
+neo4j>=5.15.0
+
+# Redis Cloud - Cache y sesiones
+redis>=5.0.0
+
+# Interfaz gráfica (tkinter viene con Python, pero por si acaso)
+# tkinter - incluido con Python
+
+# Utilidades adicionales
+python-dateutil>=2.8.2
+typing-extensions>=4.8.0
+
+# Para desarrollo y debugging (opcional)
+# matplotlib>=3.7.0  # Para gráficos (si decides implementarlos)
+# pandas>=2.0.0      # Para análisis de datos (si decides implementarlos)
