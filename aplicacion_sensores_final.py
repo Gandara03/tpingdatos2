@@ -155,18 +155,24 @@ class AplicacionSensoresOnline:
         try:
             # Verificar si ya existen usuarios
             usuarios_existentes = self.mongodb_service.obtener_usuarios()
+            
+            # Asegurar que los roles existan antes de crear usuarios
+            self.asegurar_roles_iniciales()
+            
+            # Si ya existen usuarios, no crear usuarios iniciales
             if usuarios_existentes:
                 print(f"OK Ya existen {len(usuarios_existentes)} usuarios en la base de datos")
                 return
             
-            # Crear usuarios iniciales
+            # Crear usuarios iniciales con role_id
             usuarios_iniciales = [
                 {
                     "user_id": "USER_ADMIN_001",
                     "username": "admin",
                     "email": "admin@sensores.com",
                     "password": "admin123",
-                    "rol": "administrador",
+                    "rol": "administrador",  # Mantener para compatibilidad
+                    "role_id": "ROL_ADMIN_001",  # Nueva referencia
                     "status": "activo",
                     "created_at": datetime.now().isoformat(),
                     "last_login": None,
@@ -177,7 +183,8 @@ class AplicacionSensoresOnline:
                     "username": "tecnico",
                     "email": "tecnico@sensores.com",
                     "password": "tecnico123",
-                    "rol": "técnico",
+                    "rol": "técnico",  # Mantener para compatibilidad
+                    "role_id": "ROL_TECNICO_001",  # Nueva referencia
                     "status": "activo",
                     "created_at": datetime.now().isoformat(),
                     "last_login": None,
@@ -188,7 +195,8 @@ class AplicacionSensoresOnline:
                     "username": "usuario",
                     "email": "usuario@sensores.com",
                     "password": "usuario123",
-                    "rol": "usuario",
+                    "rol": "usuario",  # Mantener para compatibilidad
+                    "role_id": "ROL_USUARIO_001",  # Nueva referencia
                     "status": "activo",
                     "created_at": datetime.now().isoformat(),
                     "last_login": None,
@@ -835,16 +843,14 @@ Para soporte técnico, contacta al administrador del sistema.
         # Campos para configuración de informe
         tk.Label(config_inner, text="Tipo de Informe:", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
         self.combo_tipo_informe = ttk.Combobox(config_inner, values=[
-            "Temperatura por Ciudad", 
-            "Humedad por País/Ciudad", 
-            "Análisis Temporal", 
-            "Comparativo por País",
-            "Alertas Climáticas"
+            "Temperatura por País", 
+            "Humedad por País",
+            "Análisis Temporal"
         ], width=25)
         self.combo_tipo_informe.grid(row=0, column=1, padx=5, pady=5)
-        self.combo_tipo_informe.set("Humedad por País/Ciudad")
+        self.combo_tipo_informe.set("Humedad por País")
         
-        tk.Label(config_inner, text="País/Ciudad:", bg='white').grid(row=0, column=2, padx=5, pady=5, sticky='w')
+        tk.Label(config_inner, text="País:", bg='white').grid(row=0, column=2, padx=5, pady=5, sticky='w')
         self.combo_pais_ciudad_informe = ttk.Combobox(config_inner, width=20)
         self.combo_pais_ciudad_informe.grid(row=0, column=3, padx=5, pady=5)
         
@@ -973,6 +979,36 @@ Para soporte técnico, contacta al administrador del sistema.
                  command=self.cargar_sensores_para_alertas, 
                  bg='#16a085', fg='white', font=('Arial', 10)).grid(row=5, column=3, padx=5, pady=10)
         
+        # --- Control de Funcionamiento (lado derecho) ---
+        control_frame = tk.LabelFrame(config_inner, text="Control de Funcionamiento", 
+                                   font=('Arial', 12, 'bold'), bg='white')
+        control_frame.grid(row=0, column=4, rowspan=6, padx=20, pady=5, sticky='n')
+
+        tk.Label(control_frame, text="Sensor:", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        self.combo_sensor_control = ttk.Combobox(control_frame, width=30)
+        self.combo_sensor_control.grid(row=0, column=1, padx=5, pady=5)
+
+        tk.Label(control_frame, text="Fecha de Revisión:", bg='white').grid(row=1, column=0, padx=5, pady=5, sticky='w')
+        self.entry_fecha_control = tk.Entry(control_frame, width=20)
+        self.entry_fecha_control.grid(row=1, column=1, padx=5, pady=5)
+        self.entry_fecha_control.insert(0, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+        tk.Label(control_frame, text="Estado del Sensor:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+        self.combo_estado_sensor = ttk.Combobox(control_frame, values=["OK", "Falla"], width=18, state='readonly')
+        self.combo_estado_sensor.grid(row=2, column=1, padx=5, pady=5)
+        self.combo_estado_sensor.set("OK")
+
+        tk.Label(control_frame, text="Observaciones:", bg='white').grid(row=3, column=0, padx=5, pady=5, sticky='nw')
+        self.txt_obs_control = tk.Text(control_frame, width=30, height=4)
+        self.txt_obs_control.grid(row=3, column=1, padx=5, pady=5)
+
+        tk.Button(control_frame, text="📝 Registrar Control", 
+                 command=self.registrar_control_funcionamiento,
+                 bg='#2ecc71', fg='white', font=('Arial', 10)).grid(row=4, column=1, padx=5, pady=10, sticky='e')
+
+        # Cargar sensores para el combo de control
+        self.cargar_sensores_para_alertas()
+
         # Lista de alertas
         lista_frame = tk.LabelFrame(tab, text="📊 Log de Alertas del Sistema", 
                                   font=('Arial', 12, 'bold'), bg='white')
@@ -1005,12 +1041,12 @@ Para soporte técnico, contacta al administrador del sistema.
                  bg='#3498db', fg='white', font=('Arial', 9)).pack(side='left', padx=10)
         
         # Treeview para alertas con columnas mejoradas
-        columns = ("ID", "Tipo", "Ubicación/Sensor", "Descripción", "Severidad", "Estado", "Fecha", "Resuelto por")
+        columns = ("ID", "Tipo", "Ubicación/Sensor", "Descripción", "Severidad", "Estado", "Fecha", "Resuelto por", "Resuelto en")
         self.tree_alertas = ttk.Treeview(lista_frame, columns=columns, show="headings")
         
         # Configurar columnas con anchos apropiados
         column_widths = {"ID": 80, "Tipo": 80, "Ubicación/Sensor": 120, "Descripción": 200, 
-                        "Severidad": 80, "Estado": 80, "Fecha": 120, "Resuelto por": 100}
+                        "Severidad": 80, "Estado": 80, "Fecha": 120, "Resuelto por": 100, "Resuelto en": 120}
         
         for col in columns:
             self.tree_alertas.heading(col, text=col)
@@ -2654,8 +2690,24 @@ Para soporte técnico, contacta al administrador del sistema.
                 
                 # Quien resolvió
                 resuelto_por = alerta.get('resolved_by', 'N/A')
-                if resuelto_por != 'N/A':
+                if resuelto_por != 'N/A' and resuelto_por is not None:
                     resuelto_por = self.obtener_username_por_user_id(resuelto_por)
+                else:
+                    resuelto_por = 'N/A'
+                
+                # Fecha de resolución formateada
+                resuelto_en = alerta.get('resolved_at', 'N/A')
+                if resuelto_en != 'N/A' and resuelto_en is not None:
+                    try:
+                        if isinstance(resuelto_en, str):
+                            dt_res = datetime.fromisoformat(resuelto_en.replace('Z', '+00:00'))
+                            resuelto_en_formateada = dt_res.strftime("%d/%m/%Y %H:%M")
+                        else:
+                            resuelto_en_formateada = str(resuelto_en)
+                    except:
+                        resuelto_en_formateada = str(resuelto_en)
+                else:
+                    resuelto_en_formateada = 'N/A'
                 
                 self.tree_alertas.insert('', 'end', values=(
                     alerta.get('alert_id', ''),
@@ -2665,7 +2717,8 @@ Para soporte técnico, contacta al administrador del sistema.
                     severidad_icono,
                     estado_icono,
                     fecha_formateada,
-                    resuelto_por
+                    resuelto_por,
+                    resuelto_en_formateada
                 ))
                 
         except Exception as e:
@@ -2689,12 +2742,80 @@ Para soporte técnico, contacta al administrador del sistema.
             
             # Actualizar combo de sensores para alertas
             self.combo_sensor_alerta['values'] = nombres_sensores
-            
             if nombres_sensores:
-                self.combo_sensor_alerta.set(nombres_sensores[0])  # Seleccionar primero por defecto
+                self.combo_sensor_alerta.set(nombres_sensores[0])
+
+            # Si existe el combo de control, actualizarlo también
+            if hasattr(self, 'combo_sensor_control'):
+                self.combo_sensor_control['values'] = nombres_sensores
+                if nombres_sensores:
+                    self.combo_sensor_control.set(nombres_sensores[0])
             
         except Exception as e:
             self.agregar_log(f"❌ Error cargando sensores para alertas: {e}")
+
+    def registrar_control_funcionamiento(self):
+        """Registrar control de funcionamiento y disparar alerta de sensor si corresponde"""
+        try:
+            if not self.mongodb_service or not self.mongodb_service.conectado:
+                messagebox.showerror("Error", "MongoDB no está disponible")
+                return
+
+            sensor_display = self.combo_sensor_control.get().strip() if hasattr(self, 'combo_sensor_control') else ''
+            estado_sensor = self.combo_estado_sensor.get().strip() if hasattr(self, 'combo_estado_sensor') else ''
+            fecha_rev = self.entry_fecha_control.get().strip() if hasattr(self, 'entry_fecha_control') else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            observaciones = self.txt_obs_control.get("1.0", tk.END).strip() if hasattr(self, 'txt_obs_control') else ''
+
+            if not sensor_display or not estado_sensor:
+                messagebox.showerror("Error", "Seleccione sensor y estado del sensor")
+                return
+
+            # Mapear display a sensor_id intentando buscar por nombre
+            sensor_id = None
+            sensores = self.mongodb_service.obtener_sensores()
+            for s in sensores:
+                if self.formatear_nombre_sensor(s) == sensor_display:
+                    sensor_id = s.get('sensor_id')
+                    break
+
+            control_id = f"CTRL_{int(time.time())}"
+            control_data = {
+                "control_id": control_id,
+                "sensor_id": sensor_id or sensor_display,
+                "reviewed_at": fecha_rev,
+                "sensor_state": estado_sensor.lower(),
+                "observations": observaciones,
+                "reviewed_by": getattr(self, 'usuario_autenticado', None)
+            }
+
+            if self.mongodb_service.crear_control(control_data):
+                self.agregar_log(f"📝 Control registrado para {sensor_display}")
+
+                # Disparar alerta de tipo sensor si hay falla
+                if estado_sensor.lower() == 'falla':
+                    alert_id = f"ALERT_SENS_{int(time.time())}"
+                    alerta_data = {
+                        "alert_id": alert_id,
+                        "type": "sensor",
+                        "categoria": "Sensor",
+                        "sensor_id": sensor_id or sensor_display,
+                        "description": f"Falla detectada en control {control_id}",
+                        "severity": "high",
+                        "status": "active",
+                        "created_at": datetime.now().isoformat(),
+                        "control_id": control_id
+                    }
+                    if self.mongodb_service.crear_alerta(alerta_data):
+                        self.agregar_log(f"🚨 Alerta de sensor creada por control: {alert_id}")
+                        self.actualizar_lista_alertas()
+
+                messagebox.showinfo("Éxito", "Control registrado correctamente")
+            else:
+                messagebox.showerror("Error", "No se pudo registrar el control")
+
+        except Exception as e:
+            self.agregar_log(f"❌ Error registrando control: {e}")
+            messagebox.showerror("Error", f"Error registrando control: {e}")
     
     def crear_tab_facturacion(self):
         """Crear tab de gestión de facturación"""
@@ -2911,7 +3032,7 @@ Para soporte técnico, contacta al administrador del sistema.
         self.combo_filtro_estado.set("Todos")
         self.combo_filtro_estado.bind('<<ComboboxSelected>>', lambda e: self.actualizar_lista_procesos())
 
-        columns = ("ID", "Nombre", "Tipo", "Ubicación", "Agrupación", "Estado")
+        columns = ("ID", "Nombre", "Tipo", "Tipo Proceso", "Ubicación", "Agrupación", "Estado")
         self.tree_procesos = ttk.Treeview(lista_frame, columns=columns, show="headings")
 
         for col in columns:
@@ -3311,14 +3432,18 @@ Para soporte técnico, contacta al administrador del sistema.
                     ubicacion = str(proceso.get('ubicacion', 'Sin ubicación'))
                     agrupacion = str(proceso.get('agrupacion', 'Sin agrupación'))
                     
+                    # Campo normalizado de tipo de proceso
+                    tipo_proceso_norm = str(proceso.get('tipo_proceso', 'N/A'))
+
                     # Guardar el proceso completo en los tags del item
                     self.tree_procesos.insert('' , 'end', values=(
                         process_id,          # Columna 0: ID
                         nombre,              # Columna 1: Nombre
                         tipo,                # Columna 2: Tipo
-                        ubicacion,           # Columna 3: Ubicación
-                        agrupacion,          # Columna 4: Agrupación
-                        estado_display       # Columna 5: Estado
+                        tipo_proceso_norm,   # Columna 3: Tipo Proceso
+                        ubicacion,           # Columna 4: Ubicación
+                        agrupacion,          # Columna 5: Agrupación
+                        estado_display       # Columna 6: Estado
                     ), tags=(process_id,))
                     procesos_mostrados += 1
                     print(f"🔍 DEBUG: ✅ Agregando proceso '{nombre}' con estado '{estado_display}'")
@@ -5147,11 +5272,14 @@ Para soporte técnico, contacta al administrador del sistema.
                 "invoice_id": factura_id,
                 "user_id": self.usuario_autenticado,
                 "amount": costo,
+                "total_amount": float(costo),
                 "status": "pending",
                 "description": f"Consulta en línea: {tipo_sensor} - {ciudad}, {pais}",
                 "service_type": "consulta_linea",
                 "location": f"{ciudad}, {pais}",
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now().isoformat(),
+                "due_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+                "procesos_facturados": []
             }
             
             # Guardar en MongoDB
@@ -5175,8 +5303,8 @@ Para soporte técnico, contacta al administrador del sistema.
             historial_window.geometry("800x600")
             historial_window.configure(bg='white')
             
-            # Crear Treeview para mostrar historial
-            columns = ("Fecha", "Ubicación", "Tipo", "Costo", "Estado")
+            # Crear Treeview para mostrar historial (agregamos Vence y Total)
+            columns = ("Fecha", "Vence", "Ubicación", "Tipo", "Costo", "Total", "Estado")
             tree_historial = ttk.Treeview(historial_window, columns=columns, show="headings")
             
             for col in columns:
@@ -5191,13 +5319,15 @@ Para soporte técnico, contacta al administrador del sistema.
             
             for factura in facturas:
                 fecha = factura.get('created_at', '')[:10]
+                vence = factura.get('due_date', 'N/A')
                 ubicacion = factura.get('location', 'N/A')
                 descripcion = factura.get('description', '')
                 tipo = descripcion.split(':')[1].split(' - ')[0].strip() if ':' in descripcion else 'N/A'
                 costo = f"${factura.get('amount', 0):.2f}"
+                total = f"${factura.get('total_amount', factura.get('amount', 0)):.2f}"
                 estado = factura.get('status', 'pending')
                 
-                tree_historial.insert("", "end", values=(fecha, ubicacion, tipo, costo, estado))
+                tree_historial.insert("", "end", values=(fecha, vence, ubicacion, tipo, costo, total, estado))
             
             tree_historial.pack(fill='both', expand=True, padx=10, pady=10)
             
@@ -5218,8 +5348,8 @@ Para soporte técnico, contacta al administrador del sistema.
             facturas_window.geometry("900x500")
             facturas_window.configure(bg='white')
             
-            # Crear Treeview para mostrar facturas
-            columns = ("ID Factura", "Fecha", "Ubicación", "Descripción", "Monto", "Estado")
+            # Crear Treeview para mostrar facturas (agregamos Vence y Total)
+            columns = ("ID Factura", "Fecha", "Vence", "Ubicación", "Descripción", "Monto", "Total", "Estado")
             tree_facturas = ttk.Treeview(facturas_window, columns=columns, show="headings")
             
             for col in columns:
@@ -5235,12 +5365,14 @@ Para soporte técnico, contacta al administrador del sistema.
             for factura in facturas:
                 factura_id = factura.get('invoice_id', 'N/A')
                 fecha = factura.get('created_at', '')[:19]
+                vence = factura.get('due_date', 'N/A')
                 ubicacion = factura.get('location', 'N/A')
                 descripcion = factura.get('description', 'N/A')
                 monto = f"${factura.get('amount', 0):.2f}"
+                total = f"${factura.get('total_amount', factura.get('amount', 0)):.2f}"
                 estado = factura.get('status', 'pending')
                 
-                tree_facturas.insert("", "end", values=(factura_id, fecha, ubicacion, descripcion, monto, estado))
+                tree_facturas.insert("", "end", values=(factura_id, fecha, vence, ubicacion, descripcion, monto, total, estado))
             
             tree_facturas.pack(fill='both', expand=True, padx=10, pady=10)
             
@@ -6692,14 +6824,25 @@ Datos históricos: {len(mediciones)} mediciones
             
             if usuario_data:
                 rol = usuario_data.get("rol", "usuario")
+                role_id = usuario_data.get("role_id")
+                
+                # Si no tiene role_id, intentar obtenerlo desde el rol
+                if not role_id:
+                    try:
+                        rol_obj = self.mongodb_service.obtener_rol_por_name(rol) if self.mongodb_service else None
+                        if rol_obj:
+                            role_id = rol_obj.get("role_id")
+                    except:
+                        pass
                 
                 # Crear sesión en Redis
                 session_data = {
                     "user_id": usuario_data.get("user_id", f"USER_{usuario.upper()}"),
                     "username": usuario,
-                    "rol": rol,
+                    "rol": rol,  # Mantener para compatibilidad
+                    "role_id": role_id,  # Nueva referencia
                     "login_time": datetime.now().isoformat(),
-                    "permissions": self.obtener_permisos_por_rol(rol)
+                    "permissions": self.obtener_permisos_por_rol(role_id if role_id else rol)
                 }
                 
                 # Guardar sesión en Redis usando set con JSON
@@ -6710,7 +6853,8 @@ Datos históricos: {len(mediciones)} mediciones
                 # Actualizar estado de la aplicación
                 self.usuario_autenticado = usuario
                 self.sesion_activa = True
-                self.rol_usuario = rol
+                self.rol_usuario = rol  # Mantener para compatibilidad
+                setattr(self, 'role_id', role_id)  # Guardar role_id como atributo
                 self.tiempo_inicio_sesion = datetime.now()  # Registrar tiempo de inicio
                 self.etiqueta_usuario.config(text=f"Usuario: {usuario} ({rol.title()})")
                 self.boton_login.config(text="Cerrar Sesión", command=self.cerrar_sesion)
@@ -6915,6 +7059,7 @@ Datos históricos: {len(mediciones)} mediciones
                 "user_id": user_id,  # Campo esperado por el módulo de facturación
                 "service": f"Tiempo de Sesión ({duracion_minutos:.1f} min)",  # Campo esperado por el módulo de facturación
                 "amount": costo_sesion,  # Campo esperado por el módulo de facturación
+                "total_amount": float(costo_sesion),
                 "status": "pending",  # Campo esperado por el módulo de facturación
                 "created_at": datetime.now().isoformat(),  # Campo esperado por el módulo de facturación
                 "due_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),  # Campo esperado por el módulo de facturación
@@ -6927,7 +7072,8 @@ Datos históricos: {len(mediciones)} mediciones
                 "fecha_fin": datetime.now().isoformat(),
                 "metodo_pago": "cuenta_corriente",
                 "rol_usuario": self.rol_usuario,
-                "usuario": self.usuario_autenticado  # Mantener para compatibilidad
+                "usuario": self.usuario_autenticado,  # Mantener para compatibilidad
+                "procesos_facturados": []
             }
             
             if self.mongodb_service and self.mongodb_service.conectado:
@@ -6958,6 +7104,7 @@ Datos históricos: {len(mediciones)} mediciones
                 "user_id": user_id,  # Campo esperado por el módulo de facturación
                 "service": f"Proceso: {nombre_proceso}",  # Campo esperado por el módulo de facturación
                 "amount": costo_proceso,  # Campo esperado por el módulo de facturación
+                "total_amount": float(costo_proceso),
                 "status": "pending",  # Campo esperado por el módulo de facturación
                 "created_at": datetime.now().isoformat(),  # Campo esperado por el módulo de facturación
                 "due_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),  # Campo esperado por el módulo de facturación
@@ -6969,7 +7116,8 @@ Datos históricos: {len(mediciones)} mediciones
                 "tipo_proceso": tipo_proceso,
                 "metodo_pago": "cuenta_corriente",
                 "rol_usuario": self.rol_usuario,
-                "usuario": self.usuario_autenticado  # Mantener para compatibilidad
+                "usuario": self.usuario_autenticado,  # Mantener para compatibilidad
+                "procesos_facturados": [{"nombre": nombre_proceso, "tipo": tipo_proceso}]
             }
             
             if self.mongodb_service and self.mongodb_service.conectado:
@@ -8871,12 +9019,13 @@ Datos históricos: {len(mediciones)} mediciones
             item = self.tree_alertas.item(seleccion[0])
             valores = item['values']
             
-            if len(valores) < 8:
+            if len(valores) < 9:
                 messagebox.showerror("Error", "Datos de alerta incompletos")
                 return
             
             alert_id = valores[0]
-            categoria = valores[2]
+            categoria_str = valores[1]  # "🌡️ Climática" o "🔧 Sensor"
+            categoria = "Climática" if "Climática" in categoria_str else "Sensor"
             
             # Diferenciar entre alertas de sensor y climáticas
             if categoria == "Climática":
@@ -8899,7 +9048,7 @@ Datos históricos: {len(mediciones)} mediciones
                 
                 # Actualizar estado en MongoDB
                 if self.mongodb_service and self.mongodb_service.conectado:
-                    if self.mongodb_service.resolver_alerta(alert_id):
+                    if self.mongodb_service.resolver_alerta(alert_id, getattr(self, 'usuario_autenticado', None)):
                         self.actualizar_lista_alertas()
                         messagebox.showinfo("Éxito", "Alerta de sensor resuelta correctamente")
                         self.agregar_log(f"✅ Alerta de sensor resuelta: {alert_id}")
@@ -8976,7 +9125,7 @@ Datos históricos: {len(mediciones)} mediciones
             item = self.tree_alertas.item(seleccion[0])
             valores = item['values']
             
-            if len(valores) < 8:
+            if len(valores) < 9:
                 messagebox.showerror("Error", "Datos de alerta incompletos")
                 return
             
@@ -10324,7 +10473,7 @@ Datos históricos: {len(mediciones)} mediciones
             self.agregar_log(f"❌ Error cargando sensores para informes: {e}")
     
     def cargar_ubicaciones_para_informes(self):
-        """Cargar ubicaciones disponibles desde MongoDB con formato legible"""
+        """Cargar SOLO países disponibles desde MongoDB para informes"""
         try:
             if not self.mongodb_service or not self.mongodb_service.conectado:
                 return
@@ -10333,75 +10482,41 @@ Datos históricos: {len(mediciones)} mediciones
             ubicaciones = self.mongodb_service.obtener_ubicaciones_disponibles()
             
             if ubicaciones:
-                # Formatear ubicaciones de manera legible
-                ubicaciones_formateadas = []
-                ubicaciones_unicas = set()  # Para evitar duplicados
-                
+                # Extraer únicamente países (evitar ciudades/zonas)
+                paises_unicos = set()
                 for ubicacion in ubicaciones:
                     if isinstance(ubicacion, dict):
-                        # Extraer información del diccionario de ubicación
-                        ciudad = ubicacion.get('city', '')
                         pais = ubicacion.get('country', '')
-                        zona = ubicacion.get('zone', '')
-                        
-                        if ciudad and pais:
-                            if zona:
-                                # Formato: "Ciudad, Zona - País"
-                                ubicacion_formateada = f"{ciudad}, {zona} - {pais}"
-                            else:
-                                # Formato: "Ciudad - País"
-                                ubicacion_formateada = f"{ciudad} - {pais}"
-                            
-                            ubicaciones_unicas.add(ubicacion_formateada)
-                        elif ciudad:
-                            # Solo ciudad disponible
-                            ubicaciones_unicas.add(ciudad)
-                        elif pais:
-                            # Solo país disponible
-                            ubicaciones_unicas.add(pais)
+                        if pais:
+                            paises_unicos.add(pais)
                     else:
-                        # Si no es un diccionario, usar como está
-                        ubicaciones_unicas.add(str(ubicacion))
+                        # Ignorar strings libres (suelen incluir ciudad/zona)
+                        continue
                 
-                # Convertir set a lista y ordenar
-                ubicaciones_formateadas = sorted(list(ubicaciones_unicas))
+                paises_lista = sorted(list(paises_unicos))
                 
-                # Agregar opciones adicionales comunes
-                ubicaciones_adicionales = [
-                    "Argentina", "Brasil", "Chile", "Colombia", "Uruguay",
-                    "Norte", "Centro", "Sur", "Este", "Oeste",
-                    "Buenos Aires", "Córdoba", "Mendoza", "Rosario", "Tucumán"
-                ]
+                # Agregar países adicionales comunes
+                paises_adicionales = ["Argentina", "Brasil", "Chile", "Colombia", "Uruguay", "Paraguay", "Perú"]
+                paises_completos = list(set(paises_lista + paises_adicionales))
+                paises_completos.sort()
                 
-                # Crear lista combinada sin duplicados
-                ubicaciones_completas = list(set(ubicaciones_formateadas + ubicaciones_adicionales))
-                ubicaciones_completas.sort()
-                
-                # Actualizar combo de ubicaciones
-                self.combo_pais_ciudad_informe['values'] = ubicaciones_completas
-                if ubicaciones_completas:
-                    self.combo_pais_ciudad_informe.set(ubicaciones_completas[0])  # Seleccionar primera por defecto
+                # Actualizar combo a solo países
+                self.combo_pais_ciudad_informe['values'] = paises_completos
+                if paises_completos:
+                    self.combo_pais_ciudad_informe.set(paises_completos[0])
             else:
                 # Si no hay ubicaciones, usar valores por defecto
-                ubicaciones_default = [
-                    "Argentina - Buenos Aires", "Argentina - Córdoba", "Argentina - Rosario", 
-                    "Argentina - Mendoza", "Argentina - La Plata",
-                    "Argentina", "Brasil", "Chile", "Colombia", "Uruguay"
-                ]
-                self.combo_pais_ciudad_informe['values'] = ubicaciones_default
-                self.combo_pais_ciudad_informe.set("Argentina - Buenos Aires")
+                paises_default = ["Argentina", "Brasil", "Chile", "Colombia", "Uruguay"]
+                self.combo_pais_ciudad_informe['values'] = paises_default
+                self.combo_pais_ciudad_informe.set(paises_default[0])
                 self.agregar_log("⚠️ Usando ubicaciones por defecto para informes")
             
         except Exception as e:
             self.agregar_log(f"❌ Error cargando ubicaciones para informes: {e}")
             # En caso de error, usar valores por defecto
-            ubicaciones_default = [
-                "Argentina - Buenos Aires", "Argentina - Córdoba", "Argentina - Rosario", 
-                "Argentina - Mendoza", "Argentina - La Plata",
-                "Argentina", "Brasil", "Chile", "Colombia", "Uruguay"
-            ]
-            self.combo_pais_ciudad_informe['values'] = ubicaciones_default
-            self.combo_pais_ciudad_informe.set("Argentina - Buenos Aires")
+            paises_default = ["Argentina", "Brasil", "Chile", "Colombia", "Uruguay"]
+            self.combo_pais_ciudad_informe['values'] = paises_default
+            self.combo_pais_ciudad_informe.set(paises_default[0])
     
     def cargar_paises_para_analisis(self):
         """Cargar países disponibles para análisis con formato legible"""
@@ -10753,9 +10868,9 @@ Datos históricos: {len(mediciones)} mediciones
             self.root.update()
             
             # Generar informe según el tipo
-            if tipo_informe == "Temperatura por Ciudad":
+            if tipo_informe == "Temperatura por País":
                 self.generar_informe_temperatura_ciudad(pais_ciudad, fecha_inicio, fecha_fin, agrupacion)
-            elif tipo_informe == "Humedad por País/Ciudad":
+            elif tipo_informe == "Humedad por País":
                 self.generar_informe_humedad_pais_ciudad(pais_ciudad, fecha_inicio, fecha_fin, agrupacion)
             elif tipo_informe == "Análisis Temporal":
                 self.generar_informe_analisis_temporal(pais_ciudad, fecha_inicio, fecha_fin, agrupacion)
@@ -10771,12 +10886,11 @@ Datos históricos: {len(mediciones)} mediciones
             messagebox.showerror("Error", f"Error generando informe: {e}")
     
     def generar_informe_humedad_pais_ciudad(self, pais_ciudad, fecha_inicio, fecha_fin, agrupacion):
-        """Generar informe de humedad por país/ciudad"""
+        """Generar informe de humedad por país"""
         try:
             # Limpiar área de informe
             self.texto_informe.delete("1.0", tk.END)
             
-            # Datos de humedad por país/ciudad
             datos_humedad = self.obtener_datos_humedad_pais_ciudad(pais_ciudad, fecha_inicio, fecha_fin)
             
             if not datos_humedad:
@@ -10784,7 +10898,7 @@ Datos históricos: {len(mediciones)} mediciones
                 return
             
             # Generar encabezado del informe
-            self.texto_informe.insert(tk.END, f"📊 INFORME DE HUMEDAD POR PAÍS/CIUDAD\n")
+            self.texto_informe.insert(tk.END, f"📊 INFORME DE HUMEDAD POR PAÍS\n")
             self.texto_informe.insert(tk.END, "="*60 + "\n\n")
             
             self.texto_informe.insert(tk.END, f"📍 Ubicación: {pais_ciudad}\n")
@@ -10922,32 +11036,32 @@ Datos históricos: {len(mediciones)} mediciones
                 "fuente": "datos_ejemplo"
             }]
     
-    def generar_informe_temperatura_ciudad(self, sensor, fecha_inicio, fecha_fin, agrupacion):
-        """Generar informe de temperatura por ciudad usando Time Series"""
+    def generar_informe_temperatura_ciudad(self, pais_ciudad, fecha_inicio, fecha_fin, agrupacion):
+        """Generar informe de temperatura por ciudad/país usando datos por ubicación"""
         try:
             # Limpiar área de informe
             self.texto_informe.delete("1.0", tk.END)
             
-            # Obtener datos de mediciones desde MongoDB Time Series
-            mediciones = self.mongodb_service.obtener_mediciones_rango(
-                sensor_name=sensor.split(" - ")[0],
+            # Obtener datos por ubicación desde el servicio MongoDB
+            datos_temperatura = self.mongodb_service.obtener_datos_temperatura_por_ubicacion(
+                ubicacion=pais_ciudad,
                 fecha_inicio=fecha_inicio,
                 fecha_fin=fecha_fin
             )
             
-            if not mediciones:
+            if not datos_temperatura:
                 self.texto_informe.insert(tk.END, "❌ No se encontraron datos para el período seleccionado\n")
                 return
             
             # Generar informe
-            self.texto_informe.insert(tk.END, f"🌡️ INFORME DE TEMPERATURA POR CIUDAD\n")
-            self.texto_informe.insert(tk.END, f"Sensor: {sensor}\n")
+            self.texto_informe.insert(tk.END, f"🌡️ INFORME DE TEMPERATURA POR PAÍS\n")
+            self.texto_informe.insert(tk.END, f"Ubicación: {pais_ciudad}\n")
             self.texto_informe.insert(tk.END, f"Período: {fecha_inicio} a {fecha_fin}\n")
             self.texto_informe.insert(tk.END, f"Agrupación: {agrupacion}\n")
             self.texto_informe.insert(tk.END, "=" * 60 + "\n\n")
             
             # Estadísticas básicas
-            temperaturas = [m.get('temperature', 0) for m in mediciones if m.get('temperature') is not None]
+            temperaturas = [d.get('temperatura') for d in datos_temperatura if d.get('temperatura') is not None]
             
             if temperaturas:
                 temp_min = min(temperaturas)
@@ -10960,17 +11074,30 @@ Datos históricos: {len(mediciones)} mediciones
                 self.texto_informe.insert(tk.END, f"• Temperatura Promedio: {temp_promedio:.2f}°C\n")
                 self.texto_informe.insert(tk.END, f"• Total de Mediciones: {len(temperaturas)}\n\n")
                 
+                # Preparar datos para reutilizar funciones de agrupación
+                from datetime import datetime as _dt
+                mediciones_normalizadas = []
+                for d in datos_temperatura:
+                    fecha_str = d.get('fecha')
+                    temp = d.get('temperatura')
+                    if not fecha_str or temp is None:
+                        continue
+                    try:
+                        ts = _dt.strptime(fecha_str, "%Y-%m-%d")
+                        mediciones_normalizadas.append({"timestamp": ts, "temperature": temp})
+                    except Exception:
+                        continue
+                
                 # Análisis por agrupación temporal
                 self.texto_informe.insert(tk.END, f"📅 ANÁLISIS TEMPORAL ({agrupacion}):\n")
                 self.texto_informe.insert(tk.END, "-" * 40 + "\n")
                 
-                # Agrupar por período según selección
                 if agrupacion == "Diaria":
-                    self.agrupar_mediciones_diarias(mediciones, "temperature")
+                    self.agrupar_mediciones_diarias(mediciones_normalizadas, "temperature")
                 elif agrupacion == "Semanal":
-                    self.agrupar_mediciones_semanales(mediciones, "temperature")
+                    self.agrupar_mediciones_semanales(mediciones_normalizadas, "temperature")
                 elif agrupacion == "Mensual":
-                    self.agrupar_mediciones_mensuales(mediciones, "temperature")
+                    self.agrupar_mediciones_mensuales(mediciones_normalizadas, "temperature")
                 
                 # Recomendaciones
                 self.texto_informe.insert(tk.END, f"\n💡 RECOMENDACIONES:\n")
@@ -11139,29 +11266,31 @@ Datos históricos: {len(mediciones)} mediciones
         except Exception as e:
             self.texto_informe.insert(tk.END, f"❌ Error generando informe de humedad: {e}\n")
     
-    def generar_informe_analisis_temporal(self, sensor, fecha_inicio, fecha_fin, agrupacion):
-        """Generar análisis temporal completo"""
+    def generar_informe_analisis_temporal(self, pais_ciudad, fecha_inicio, fecha_fin, agrupacion):
+        """Generar análisis temporal completo por ubicación"""
         try:
             self.texto_informe.delete("1.0", tk.END)
             
-            mediciones = self.mongodb_service.obtener_mediciones_rango(
-                sensor_name=sensor.split(" - ")[0],
+            # Obtener datos por ubicación
+            datos_temp = self.mongodb_service.obtener_datos_temperatura_por_ubicacion(
+                ubicacion=pais_ciudad,
                 fecha_inicio=fecha_inicio,
                 fecha_fin=fecha_fin
             )
             
-            if not mediciones:
+            if not datos_temp:
                 self.texto_informe.insert(tk.END, "❌ No se encontraron datos para el período seleccionado\n")
                 return
             
             self.texto_informe.insert(tk.END, f"📈 ANÁLISIS TEMPORAL COMPLETO\n")
-            self.texto_informe.insert(tk.END, f"Sensor: {sensor}\n")
+            self.texto_informe.insert(tk.END, f"Ubicación: {pais_ciudad}\n")
             self.texto_informe.insert(tk.END, f"Período: {fecha_inicio} a {fecha_fin}\n")
             self.texto_informe.insert(tk.END, "=" * 60 + "\n\n")
             
             # Análisis de temperatura
-            temperaturas = [m.get('temperature', 0) for m in mediciones if m.get('temperature') is not None]
-            humedades = [m.get('humidity', 0) for m in mediciones if m.get('humidity') is not None]
+            temperaturas = [d.get('temperatura') for d in datos_temp if d.get('temperatura') is not None]
+            # Usamos la humedad registrada en las mismas mediciones de temperatura cuando esté disponible
+            humedades = [d.get('humedad') for d in datos_temp if d.get('humedad') is not None]
             
             if temperaturas and humedades:
                 self.texto_informe.insert(tk.END, f"🌡️ ANÁLISIS DE TEMPERATURA:\n")
@@ -11493,16 +11622,29 @@ Datos históricos: {len(mediciones)} mediciones
                     return
                 
                 # Crear datos del proceso
+                # Normalizar tipo_proceso a partir del texto seleccionado
+                if tipo.startswith("Procesos Periódicos"):
+                    tipo_proceso_norm = "periodico_consulta"
+                elif tipo.startswith("Informe"):
+                    tipo_proceso_norm = "informe"
+                else:
+                    tipo_proceso_norm = "otro"
+
+                # Calcular costo estimado (base) y persistirlo junto con tipo_proceso
+                costo_base = self.calcular_costo_proceso(tipo, 0)
+
                 proceso_data = {
                     "process_id": f"PROC_{int(time.time())}",
                     "nombre": nombre,
                     "descripcion": descripcion,
                     "tipo": tipo,
+                    "tipo_proceso": tipo_proceso_norm,
                     "ubicacion": ubicacion,
                     "agrupacion": agrupacion,
                     "parametros": parametros,
                     "fecha_inicio": fecha_inicio,
                     "fecha_fin": fecha_fin,
+                    "costo": float(costo_base),
                     "user_id": self.usuario_autenticado,
                     "status": "pending",
                     "created_at": datetime.now().isoformat(),
@@ -11518,9 +11660,8 @@ Datos históricos: {len(mediciones)} mediciones
                         
                         # Generar factura si corresponde
                         if self.rol_usuario == "usuario":
-                            costo_proceso = self.calcular_costo_proceso(tipo, 0)  # Costo base
-                            if costo_proceso > 0:
-                                self.generar_factura_proceso(nombre, tipo, costo_proceso)
+                            if costo_base > 0:
+                                self.generar_factura_proceso(nombre, tipo, costo_base)
                     else:
                         messagebox.showerror("Error", "No se pudo crear el proceso")
                 else:
@@ -11577,7 +11718,7 @@ Datos históricos: {len(mediciones)} mediciones
                     font=('Arial', 10), bg='#ecf0f1').pack()
             
             # Treeview para mostrar procesos
-            columns = ("ID", "Nombre", "Tipo", "Creado por", "Prioridad", "Fecha Creación", "Costo")
+            columns = ("ID", "Nombre", "Tipo", "Tipo Proceso", "Creado por", "Prioridad", "Fecha Creación", "Costo")
             tree_backlog = ttk.Treeview(backlog_window, columns=columns, show="headings")
             
             for col in columns:
@@ -11598,6 +11739,7 @@ Datos históricos: {len(mediciones)} mediciones
                     proceso.get('process_id', ''),
                     proceso.get('name', ''),
                     proceso.get('type', ''),
+                    proceso.get('tipo_proceso', 'N/A'),
                     proceso.get('created_by', ''),
                     proceso.get('priority', 'Normal'),
                     proceso.get('created_at', '')[:10],
@@ -13926,6 +14068,16 @@ Sensor analizado: {sensor_name}
                 messagebox.showerror("Error", "Por favor ingrese un email válido")
                 return
             
+            # Resolver role_id desde la colección de roles
+            role_id = None
+            try:
+                if self.mongodb_service and self.mongodb_service.conectado and rol:
+                    rol_obj = self.mongodb_service.obtener_rol_por_name(rol)
+                    if rol_obj:
+                        role_id = rol_obj.get("role_id")
+            except Exception as e:
+                self.agregar_log(f"⚠️ No se pudo resolver role_id para rol '{rol}': {e}")
+
             # Crear usuario en MongoDB Atlas
             usuario_data = {
                 "user_id": f"USER_{int(time.time())}",
@@ -13933,6 +14085,7 @@ Sensor analizado: {sensor_name}
                 "email": email,
                 "password": password,  # En un sistema real, esto debería estar encriptado
                 "rol": rol,
+                "role_id": role_id,
                 "status": estado,
                 "created_at": datetime.now().isoformat(),
                 "last_login": None,
@@ -14020,14 +14173,43 @@ Sensor analizado: {sensor_name}
             self.agregar_log(f"❌ Error en sincronización masiva: {e}")
             return False
     
+    def asegurar_roles_iniciales(self):
+        """Asegurar que los roles iniciales existan en la colección roles"""
+        if not self.mongodb_service or not self.mongodb_service.conectado:
+            return
+        
+        try:
+            # Configurar colecciones (esto crea los roles iniciales si no existen)
+            self.mongodb_service.configurar_colecciones_optimizadas()
+        except Exception as e:
+            self.agregar_log(f"⚠️ Error asegurando roles iniciales: {e}")
+    
     def obtener_permisos_por_rol(self, rol):
-        """Obtener permisos según el rol"""
-        permisos = {
-            "usuario": ["read", "request_process"],
-            "técnico": ["read", "write", "manage_sensors", "manage_alerts"],
-            "administrador": ["read", "write", "admin", "manage_users", "manage_system"]
-        }
-        return permisos.get(rol, ["read"])
+        """Obtener permisos según el rol (puede ser string o role_id)"""
+        try:
+            # Primero intentar obtener desde la colección de roles
+            if self.mongodb_service and self.mongodb_service.conectado:
+                # Si es un role_id, obtener directamente
+                if rol.startswith("ROL_"):
+                    rol_data = self.mongodb_service.obtener_rol_por_id(rol)
+                    if rol_data and rol_data.get("permissions"):
+                        return rol_data["permissions"]
+                
+                # Si es un nombre (string), buscar por name
+                rol_data = self.mongodb_service.obtener_rol_por_name(rol)
+                if rol_data and rol_data.get("permissions"):
+                    return rol_data["permissions"]
+            
+            # Fallback a permisos hardcodeados si no hay DB o no se encuentra
+            permisos_fallback = {
+                "usuario": ["read", "request_process"],
+                "técnico": ["read", "write", "manage_sensors", "manage_alerts"],
+                "administrador": ["read", "write", "admin", "manage_users", "manage_system"]
+            }
+            return permisos_fallback.get(rol, ["read"])
+        except Exception as e:
+            self.agregar_log(f"⚠️ Error obteniendo permisos por rol {rol}, usando fallback: {e}")
+            return ["read"]
     
     def actualizar_lista_usuarios(self):
         """Actualizar lista de usuarios desde MongoDB Atlas"""
@@ -14121,12 +14303,23 @@ Sensor analizado: {sensor_name}
         
         def guardar_cambios():
             try:
+                # Resolver role_id desde la colección de roles
+                role_id_edit = None
+                try:
+                    if self.mongodb_service and self.mongodb_service.conectado and combo_rol.get():
+                        rol_obj = self.mongodb_service.obtener_rol_por_name(combo_rol.get())
+                        if rol_obj:
+                            role_id_edit = rol_obj.get("role_id")
+                except Exception as e:
+                    self.agregar_log(f"⚠️ No se pudo resolver role_id al editar: {e}")
+
                 # Actualizar usuario en MongoDB
                 usuario_actualizado = {
                     "user_id": valores_usuario[0],
                     "username": entry_username.get(),
                     "email": entry_email.get(),
                     "rol": combo_rol.get(),
+                    "role_id": role_id_edit,
                     "status": combo_estado.get(),
                     "permissions": self.obtener_permisos_por_rol(combo_rol.get())
                 }

@@ -38,6 +38,7 @@ class ServicioRedisOptimizado:
         
         # Prefijos de claves
         self.prefijo_sesiones = "session:"
+        self.prefijo_sesiones_cerradas = "session:closed:"
         self.prefijo_cache_sensores = "cache:sensors:"
         self.prefijo_cache_usuarios = "cache:users:"
         self.prefijo_cache_alertas = "cache:alerts:"
@@ -146,13 +147,40 @@ class ServicioRedisOptimizado:
         
         try:
             session_key = f"{self.prefijo_sesiones}{session_id}"
+            # Recuperar la sesión actual si existe
+            session_data = self.redis_client.get(session_key)
+            closed_at = datetime.now().isoformat()
+
+            if session_data:
+                try:
+                    session_info = json.loads(session_data)
+                except Exception:
+                    # Si no es JSON, intentar pickle
+                    try:
+                        session_info = pickle.loads(session_data)
+                    except Exception:
+                        session_info = {"session_id": session_id}
+
+                # Marcar cierre y estado
+                session_info["closed_at"] = closed_at
+                session_info["status"] = "closed"
+
+                # Archivar sesión cerrada con TTL (mismo TTL que sesiones activas)
+                closed_key = f"{self.prefijo_sesiones_cerradas}{session_id}"
+                try:
+                    self.redis_client.setex(closed_key, self.ttl_sesiones, json.dumps(session_info))
+                except Exception:
+                    # Fallback a set normal si falla setex
+                    self.redis_client.set(closed_key, json.dumps(session_info))
+
+            # Eliminar sesión activa
             result = self.redis_client.delete(session_key)
-            
+
             if result:
-                print(f"✅ Sesión {session_id} cerrada")
+                print(f"✅ Sesión {session_id} cerrada (closed_at={closed_at})")
                 return True
             else:
-                print(f"⚠️ Sesión {session_id} no encontrada")
+                print(f"⚠️ Sesión {session_id} no encontrada para cierre")
                 return False
                 
         except Exception as e:

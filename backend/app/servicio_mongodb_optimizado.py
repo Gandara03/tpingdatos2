@@ -56,12 +56,9 @@ class ServicioMongoDBOptimizado:
         try:
             print("🏗️ Configurando colecciones optimizadas...")
             
-            # Eliminar colecciones existentes para empezar limpio
-            colecciones_existentes = self.db.list_collection_names()
-            for coleccion in colecciones_existentes:
-                if coleccion in ['sensors', 'measurements', 'users', 'invoices', 'payments', 'accounts', 'alerts']:
-                    self.db.drop_collection(coleccion)
-                    print(f"   🗑️ Colección '{coleccion}' eliminada")
+            # NOTA: Ya NO eliminamos colecciones existentes para preservar datos
+            # Las colecciones 'users' y 'roles' se mantienen intactas para migración segura
+            # Si se necesita resetear, hacerlo manualmente o con una función específica
             
             # 1. SENSORS - Documentos con metadatos completos
             sensors_collection = self.db.sensors
@@ -97,15 +94,55 @@ class ServicioMongoDBOptimizado:
                 measurements_collection.create_index("sensor_id")
                 print(f"   ⚠️ Time Series no disponible, usando colección normal: {e}")
             
-            # 3. USERS - Documentos flexibles
+            # 3. ROLES - Colección de roles del sistema
+            roles_collection = self.db.roles
+            roles_collection.create_index("role_id", unique=True)
+            roles_collection.create_index("name", unique=True)
+            print("   ✅ Colección 'roles' configurada")
+            
+            # Crear roles iniciales si no existen
+            roles_iniciales = [
+                {
+                    "role_id": "ROL_USUARIO_001",
+                    "name": "usuario",
+                    "description": "Usuario estándar del sistema. Puede leer datos y solicitar procesos.",
+                    "permissions": ["read", "request_process"],
+                    "created_at": datetime.now(),
+                    "status": "active"
+                },
+                {
+                    "role_id": "ROL_TECNICO_001",
+                    "name": "técnico",
+                    "description": "Técnico del sistema. Puede gestionar sensores, alertas y ejecutar procesos.",
+                    "permissions": ["read", "write", "manage_sensors", "manage_alerts"],
+                    "created_at": datetime.now(),
+                    "status": "active"
+                },
+                {
+                    "role_id": "ROL_ADMIN_001",
+                    "name": "administrador",
+                    "description": "Administrador del sistema. Acceso completo incluyendo gestión de usuarios y sistema.",
+                    "permissions": ["read", "write", "admin", "manage_users", "manage_system"],
+                    "created_at": datetime.now(),
+                    "status": "active"
+                }
+            ]
+            
+            for rol in roles_iniciales:
+                if not roles_collection.find_one({"role_id": rol["role_id"]}):
+                    roles_collection.insert_one(rol)
+                    print(f"   ✅ Rol inicial creado: {rol['name']}")
+            
+            # 4. USERS - Documentos flexibles (actualizado para usar role_id)
             users_collection = self.db.users
             users_collection.create_index("user_id", unique=True)
             users_collection.create_index("email", unique=True)
-            users_collection.create_index("role")
+            users_collection.create_index("role_id")  # Nuevo índice para role_id
+            users_collection.create_index("role")     # Mantener para compatibilidad durante migración
             users_collection.create_index("status")
-            print("   ✅ Colección 'users' configurada")
+            print("   ✅ Colección 'users' configurada con soporte para role_id")
             
-            # 4. INVOICES - Transacciones ACID
+            # 5. INVOICES - Transacciones ACID
             invoices_collection = self.db.invoices
             invoices_collection.create_index("invoice_id", unique=True)
             invoices_collection.create_index("user_id")
@@ -113,7 +150,7 @@ class ServicioMongoDBOptimizado:
             invoices_collection.create_index("created_at")
             print("   ✅ Colección 'invoices' configurada para transacciones ACID")
             
-            # 5. PAYMENTS - Transacciones ACID
+            # 6. PAYMENTS - Transacciones ACID
             payments_collection = self.db.payments
             payments_collection.create_index("payment_id", unique=True)
             payments_collection.create_index("invoice_id")
@@ -121,14 +158,14 @@ class ServicioMongoDBOptimizado:
             payments_collection.create_index("created_at")
             print("   ✅ Colección 'payments' configurada para transacciones ACID")
             
-            # 6. ACCOUNTS - Cuentas corrientes
+            # 7. ACCOUNTS - Cuentas corrientes
             accounts_collection = self.db.accounts
             accounts_collection.create_index("account_id", unique=True)
             accounts_collection.create_index("user_id", unique=True)
             accounts_collection.create_index("balance")
             print("   ✅ Colección 'accounts' configurada")
             
-            # 7. ALERTS - Sistema de alertas
+            # 8. ALERTS - Sistema de alertas
             alerts_collection = self.db.alerts
             alerts_collection.create_index("alert_id", unique=True)
             alerts_collection.create_index("sensor_id")
@@ -1242,6 +1279,9 @@ class ServicioMongoDBOptimizado:
             return False
         
         try:
+            # Asegurar campos de resolución presentes
+            alerta_data.setdefault("resolved_at", None)
+            alerta_data.setdefault("resolved_by", None)
             result = self.db.alerts.insert_one(alerta_data)
             if result.inserted_id:
                 print(f"✅ Alerta '{alerta_data['alert_id']}' creada correctamente")
@@ -1254,15 +1294,15 @@ class ServicioMongoDBOptimizado:
             print(f"❌ Error creando alerta: {e}")
             return False
     
-    def resolver_alerta(self, alert_id: str) -> bool:
-        """Resolver alerta cambiando su estado"""
+    def resolver_alerta(self, alert_id: str, resolved_by: Optional[str] = None) -> bool:
+        """Resolver alerta cambiando su estado, guardando resolved_at/resolved_by"""
         if not self.conectado:
             return False
         
         try:
             result = self.db.alerts.update_one(
                 {"alert_id": alert_id},
-                {"$set": {"status": "resolved", "resolved_at": datetime.now().isoformat()}}
+                {"$set": {"status": "resolved", "resolved_at": datetime.now().isoformat(), "resolved_by": resolved_by}}
             )
             
             if result.modified_count > 0:
@@ -1275,6 +1315,177 @@ class ServicioMongoDBOptimizado:
         except Exception as e:
             print(f"❌ Error resolviendo alerta: {e}")
             return False
+
+    # --- Controles de Funcionamiento ---
+    def crear_control(self, control_data: Dict[str, Any]) -> bool:
+        """Crear registro de control de funcionamiento del sensor"""
+        if not self.conectado:
+            return False
+        try:
+            result = self.db.controls.insert_one(control_data)
+            return result.inserted_id is not None
+        except Exception as e:
+            print(f"❌ Error creando control: {e}")
+            return False
+
+    def obtener_controles(self, sensor_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Obtener controles de funcionamiento (opcional filtrar por sensor)"""
+        if not self.conectado:
+            return []
+        try:
+            query = {"sensor_id": sensor_id} if sensor_id else {}
+            controles = list(self.db.controls.find(query).sort("reviewed_at", -1))
+            for c in controles:
+                c["_id"] = str(c["_id"])
+            return controles
+        except Exception as e:
+            print(f"❌ Error obteniendo controles: {e}")
+            return []
+
+    # --- Gestión de Roles ---
+    def crear_rol(self, rol_data: Dict[str, Any]) -> bool:
+        """Crear nuevo rol"""
+        if not self.conectado:
+            return False
+        try:
+            # Verificar que role_id y name no existan
+            if self.db.roles.find_one({"$or": [{"role_id": rol_data.get("role_id")}, {"name": rol_data.get("name")}]}):
+                print(f"❌ Rol con role_id '{rol_data.get('role_id')}' o name '{rol_data.get('name')}' ya existe")
+                return False
+            
+            result = self.db.roles.insert_one(rol_data)
+            if result.inserted_id:
+                print(f"✅ Rol '{rol_data.get('name')}' creado correctamente")
+                return True
+            return False
+        except Exception as e:
+            print(f"❌ Error creando rol: {e}")
+            return False
+
+    def obtener_roles(self) -> List[Dict[str, Any]]:
+        """Obtener todos los roles activos"""
+        if not self.conectado:
+            return []
+        try:
+            roles = list(self.db.roles.find({"status": "active"}).sort("name", 1))
+            for r in roles:
+                r["_id"] = str(r["_id"])
+            return roles
+        except Exception as e:
+            print(f"❌ Error obteniendo roles: {e}")
+            return []
+
+    def obtener_rol_por_id(self, role_id: str) -> Optional[Dict[str, Any]]:
+        """Obtener rol por role_id"""
+        if not self.conectado:
+            return None
+        try:
+            rol = self.db.roles.find_one({"role_id": role_id})
+            if rol:
+                rol["_id"] = str(rol["_id"])
+            return rol
+        except Exception as e:
+            print(f"❌ Error obteniendo rol {role_id}: {e}")
+            return None
+
+    def obtener_rol_por_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Obtener rol por name (nombre del rol)"""
+        if not self.conectado:
+            return None
+        try:
+            rol = self.db.roles.find_one({"name": name, "status": "active"})
+            if rol:
+                rol["_id"] = str(rol["_id"])
+            return rol
+        except Exception as e:
+            print(f"❌ Error obteniendo rol por nombre {name}: {e}")
+            return None
+
+    def actualizar_rol(self, role_id: str, rol_data: Dict[str, Any]) -> bool:
+        """Actualizar rol existente"""
+        if not self.conectado:
+            return False
+        try:
+            rol_data["updated_at"] = datetime.now()
+            result = self.db.roles.update_one(
+                {"role_id": role_id},
+                {"$set": rol_data}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"❌ Error actualizando rol: {e}")
+            return False
+
+    def migrar_usuarios_a_role_id(self) -> Dict[str, int]:
+        """Migrar usuarios existentes de campo 'rol' (string) a 'role_id' (referencia)"""
+        if not self.conectado:
+            return {"success": 0, "errors": 0, "skipped": 0}
+        
+        try:
+            print("🔄 Iniciando migración de usuarios a role_id...")
+            
+            # Mapeo de valores antiguos de 'rol' a role_id
+            mapeo_roles = {
+                "usuario": "ROL_USUARIO_001",
+                "técnico": "ROL_TECNICO_001",
+                "administrador": "ROL_ADMIN_001",
+                "admin": "ROL_ADMIN_001",
+                "tech": "ROL_TECNICO_001",
+                "user": "ROL_USUARIO_001"
+            }
+            
+            usuarios = list(self.db.users.find({}))
+            stats = {"success": 0, "errors": 0, "skipped": 0}
+            
+            for usuario in usuarios:
+                try:
+                    user_id = usuario.get("user_id")
+                    rol_antiguo = usuario.get("rol")
+                    role_id_actual = usuario.get("role_id")
+                    
+                    # Si ya tiene role_id, saltar
+                    if role_id_actual:
+                        stats["skipped"] += 1
+                        continue
+                    
+                    # Buscar role_id correspondiente
+                    if rol_antiguo and rol_antiguo in mapeo_roles:
+                        nuevo_role_id = mapeo_roles[rol_antiguo]
+                        
+                        # Verificar que el rol existe en la colección roles
+                        rol_existe = self.db.roles.find_one({"role_id": nuevo_role_id})
+                        if not rol_existe:
+                            print(f"⚠️ Rol {nuevo_role_id} no existe para usuario {user_id}, saltando...")
+                            stats["errors"] += 1
+                            continue
+                        
+                        # Actualizar usuario: agregar role_id manteniendo rol para compatibilidad
+                        self.db.users.update_one(
+                            {"user_id": user_id},
+                            {"$set": {"role_id": nuevo_role_id}}
+                        )
+                        stats["success"] += 1
+                        print(f"✅ Usuario {user_id} migrado: '{rol_antiguo}' → {nuevo_role_id}")
+                    else:
+                        # Si no hay mapeo, asignar rol de usuario por defecto
+                        default_role_id = "ROL_USUARIO_001"
+                        self.db.users.update_one(
+                            {"user_id": user_id},
+                            {"$set": {"role_id": default_role_id, "rol": "usuario"}}
+                        )
+                        stats["success"] += 1
+                        print(f"⚠️ Usuario {user_id} sin rol válido, asignado: {default_role_id}")
+                        
+                except Exception as e:
+                    print(f"❌ Error migrando usuario {usuario.get('user_id', 'N/A')}: {e}")
+                    stats["errors"] += 1
+            
+            print(f"✅ Migración completada: {stats['success']} exitosos, {stats['skipped']} omitidos, {stats['errors']} errores")
+            return stats
+            
+        except Exception as e:
+            print(f"❌ Error en migración: {e}")
+            return {"success": 0, "errors": 1, "skipped": 0}
     
     def eliminar_alerta(self, alert_id: str) -> bool:
         """Eliminar alerta"""
