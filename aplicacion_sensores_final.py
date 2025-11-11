@@ -13,7 +13,6 @@ import threading
 import time
 import os
 import sys
-import asyncio
 import uuid
 
 # Agregar el directorio backend al path
@@ -27,6 +26,8 @@ try:
 except ImportError as e:
     MONGODB_ATLAS_DISPONIBLE = False
     print(f"ERROR MongoDB Atlas no disponible: {e}")
+
+from sensor_setup import ensure_initial_sensors, normalize_location
 
 try:
     from backend.app.servicio_neo4j_optimizado import ServicioNeo4jOptimizado
@@ -214,73 +215,10 @@ class AplicacionSensoresOnline:
             print("OK Usuarios iniciales creados correctamente")
             
             # Crear sensores iniciales
-            self.crear_sensores_iniciales()
+            ensure_initial_sensors(self.mongodb_service)
             
         except Exception as e:
             print(f"ERROR Error creando usuarios iniciales: {e}")
-    
-    def crear_sensores_iniciales(self):
-        """Verificar y cargar sensores desde MongoDB"""
-        try:
-            if not self.mongodb_service or not self.mongodb_service.conectado:
-                print("ERROR MongoDB Atlas no disponible para cargar sensores")
-                return
-            
-            # Obtener sensores existentes desde MongoDB
-            sensores_existentes = self.mongodb_service.obtener_sensores()
-            if sensores_existentes:
-                print(f"OK Sensores cargados desde MongoDB: {len(sensores_existentes)} sensores")
-                return
-            
-            # Si no hay sensores, crear algunos básicos usando el servicio
-            print("⚠️ No hay sensores en MongoDB, creando sensores básicos...")
-            self.crear_sensores_basicos()
-                
-        except Exception as e:
-            print(f"ERROR cargando sensores: {e}")
-    
-    def crear_sensores_basicos(self):
-        """Crear sensores básicos usando el servicio de MongoDB"""
-        try:
-            # Crear sensores básicos usando el servicio
-            sensores_basicos = [
-                {
-                    "sensor_id": "SENSOR_BA_001",
-                    "name": "Sensor Buenos Aires Centro",
-                    "location": "Buenos Aires, Argentina",
-                    "type": "Temperatura",
-                    "status": "activo",
-                    "description": "Sensor de temperatura en el centro de Buenos Aires",
-                    "coordinates": {"lat": -34.6037, "lng": -58.3816}
-                },
-                {
-                    "sensor_id": "SENSOR_CBA_001",
-                    "name": "Sensor Córdoba Norte",
-                    "location": "Córdoba, Argentina",
-                    "type": "Humedad",
-                    "status": "activo",
-                    "description": "Sensor de humedad en el norte de Córdoba",
-                    "coordinates": {"lat": -31.4201, "lng": -64.1888}
-                },
-                {
-                    "sensor_id": "SENSOR_ROS_001",
-                    "name": "Sensor Rosario Sur",
-                    "location": "Rosario, Argentina",
-                    "type": "Ambos",
-                    "status": "activo",
-                    "description": "Sensor combinado de temperatura y humedad en Rosario",
-                    "coordinates": {"lat": -32.9442, "lng": -60.6505}
-                }
-            ]
-            
-            # Crear sensores usando el servicio
-            for sensor in sensores_basicos:
-                self.mongodb_service.crear_sensor(sensor)
-            
-            print(f"OK Sensores básicos creados: {len(sensores_basicos)} sensores")
-            
-        except Exception as e:
-            print(f"ERROR creando sensores básicos: {e}")
     
     def crear_interfaz_basica(self):
         """Crear interfaz básica (solo header inicialmente)"""
@@ -498,137 +436,6 @@ class AplicacionSensoresOnline:
             self.agregar_log(f"❌ Error en actualización del sistema: {e}")
             messagebox.showerror("Error", f"Error actualizando sistema: {e}")
     
-    def mostrar_estadisticas_generales(self):
-        """Mostrar estadísticas generales del sistema"""
-        try:
-            if not self.mongodb_service or not self.mongodb_service.conectado:
-                messagebox.showerror("Error", "MongoDB no está disponible")
-                return
-            
-            # Crear ventana de estadísticas
-            stats_window = tk.Toplevel(self.root)
-            stats_window.title("Estadísticas Generales del Sistema")
-            stats_window.geometry("600x400")
-            stats_window.configure(bg='white')
-            stats_window.transient(self.root)
-            stats_window.grab_set()
-            
-            # Centrar ventana
-            stats_window.geometry("+%d+%d" % (self.root.winfo_rootx() + 50, self.root.winfo_rooty() + 50))
-            
-            tk.Label(stats_window, text="📊 Estadísticas Generales", 
-                    font=('Arial', 16, 'bold'), bg='white').pack(pady=10)
-            
-            # Frame principal con scroll
-            main_frame = tk.Frame(stats_window, bg='white')
-            main_frame.pack(fill='both', expand=True, padx=20, pady=10)
-            
-            # Crear área de texto con scroll
-            texto_stats = scrolledtext.ScrolledText(main_frame, height=20, width=70)
-            texto_stats.pack(fill='both', expand=True)
-            
-            # Obtener estadísticas
-            sensores = self.mongodb_service.obtener_sensores()
-            mediciones = self.mongodb_service.obtener_mediciones()
-            alertas = self.mongodb_service.obtener_alertas()
-            usuarios = self.mongodb_service.obtener_usuarios()
-            
-            # Generar reporte
-            texto_stats.insert(tk.END, "📈 RESUMEN GENERAL DEL SISTEMA\n")
-            texto_stats.insert(tk.END, "=" * 50 + "\n\n")
-            
-            texto_stats.insert(tk.END, f"🔢 Total de Sensores: {len(sensores)}\n")
-            texto_stats.insert(tk.END, f"📊 Total de Mediciones: {len(mediciones)}\n")
-            texto_stats.insert(tk.END, f"🚨 Total de Alertas: {len(alertas)}\n")
-            texto_stats.insert(tk.END, f"👥 Total de Usuarios: {len(usuarios)}\n\n")
-            
-            # Sensores por estado
-            sensores_activos = [s for s in sensores if s.get('status') == 'activo']
-            texto_stats.insert(tk.END, f"✅ Sensores Activos: {len(sensores_activos)}\n")
-            texto_stats.insert(tk.END, f"❌ Sensores Inactivos: {len(sensores) - len(sensores_activos)}\n\n")
-            
-            # Alertas por estado
-            alertas_pendientes = [a for a in alertas if a.get('status') == 'pendiente']
-            texto_stats.insert(tk.END, f"⏳ Alertas Pendientes: {len(alertas_pendientes)}\n")
-            texto_stats.insert(tk.END, f"✅ Alertas Resueltas: {len(alertas) - len(alertas_pendientes)}\n\n")
-            
-            # Usuarios por rol
-            usuarios_activos = [u for u in usuarios if u.get('status') == 'activo']
-            texto_stats.insert(tk.END, f"👤 Usuarios Activos: {len(usuarios_activos)}\n")
-            texto_stats.insert(tk.END, f"🔒 Usuarios Inactivos: {len(usuarios) - len(usuarios_activos)}\n\n")
-            
-            texto_stats.insert(tk.END, f"📅 Última actualización: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            
-            self.agregar_log("📊 Estadísticas generales mostradas")
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error mostrando estadísticas: {e}")
-            messagebox.showerror("Error", f"Error mostrando estadísticas: {e}")
-    
-    def mostrar_ayuda(self):
-        """Mostrar ayuda del sistema"""
-        help_text = """
-🏠 SISTEMA DE GESTIÓN DE SENSORES - AYUDA
-
-📋 MÓDULOS DISPONIBLES:
-
-📊 Sensores: Gestionar sensores del sistema
-   • Agregar, editar y eliminar sensores
-   • Configurar ubicaciones y tipos
-   • Generar datos de prueba
-
-📈 Análisis: Analizar datos de sensores
-   • Seleccionar país y ciudad
-   • Configurar rangos de fechas
-   • Generar gráficos y reportes
-
-📋 Informes: Generar reportes y estadísticas
-   • Diferentes tipos de informes
-   • Exportar en múltiples formatos
-   • Análisis por ubicación
-
-🚨 Alertas: Configurar y gestionar alertas
-   • Crear alertas personalizadas
-   • Configurar umbrales
-   • Gestionar estados
-
-💰 Facturación: Gestionar facturas y pagos
-   • Ver cuentas corrientes
-   • Generar facturas
-   • Procesar pagos
-
-💬 Comunicación: Mensajes y notificaciones
-   • Enviar mensajes
-   • Crear grupos
-   • Gestionar notificaciones
-
-⚙️ Procesos: Procesos automatizados
-   • Configurar procesos
-   • Monitorear ejecución
-   • Gestionar colas
-
-🔧 Servicios: Servicios del sistema
-   • Configurar servicios
-   • Monitorear estado
-   • Gestionar recursos
-
-⚙️ Configuración: Configuración del sistema
-   • Parámetros generales
-   • Configuración de base de datos
-   • Logs del sistema
-
-💡 CONSEJOS:
-• Usa los botones de navegación para moverte entre módulos
-• Revisa los logs para información detallada
-• Actualiza el sistema regularmente
-• Contacta al administrador si necesitas ayuda
-
-🔗 SOPORTE:
-Para soporte técnico, contacta al administrador del sistema.
-        """
-        
-        messagebox.showinfo("Ayuda del Sistema", help_text)
-        self.agregar_log("❓ Ayuda del sistema mostrada")
     
     def crear_tab_sensores(self):
         """Crear tab de gestión de sensores"""
@@ -1759,181 +1566,6 @@ Para soporte técnico, contacta al administrador del sistema.
             self.agregar_log(f"❌ Error abriendo ventana de configuración: {e}")
             messagebox.showerror("Error", f"Error abriendo configuración: {e}")
     
-    def configurar_tab_visualizar(self, tab):
-        """Configurar pestaña de visualización de umbrales"""
-        try:
-            # Información sobre cómo funcionan los umbrales
-            info_frame = tk.LabelFrame(tab, text="ℹ️ Información", 
-                                     font=('Arial', 12, 'bold'), bg='white')
-            info_frame.pack(fill='x', padx=10, pady=10)
-            
-            info_text = """
-🌍 Los umbrales climáticos se configuran por CIUDAD y PAÍS:
-• Cada sensor tiene una ubicación (ciudad, país)
-• Los umbrales se aplican automáticamente según la ubicación del sensor
-• Se pueden configurar umbrales globales (para todas las ubicaciones)
-• Se pueden configurar umbrales específicos por sensor
-
-📊 Jerarquía de umbrales:
-1. Umbrales específicos del sensor (si existen)
-2. Umbrales globales (si no hay específicos)
-3. Umbrales por defecto (si no hay configuración)
-
-🔍 El botón "Detectar Alertas" analiza TODAS las mediciones:
-• Revisa cada medición de cada sensor
-• Compara con los umbrales configurados
-• Crea alertas automáticas si se exceden los límites
-            """
-            
-            tk.Label(info_frame, text=info_text, font=('Arial', 10), 
-                    bg='white', justify='left').pack(padx=10, pady=10)
-            
-            # Mostrar umbrales actuales
-            umbrales_frame = tk.LabelFrame(tab, text="📋 Umbrales Actuales", 
-                                         font=('Arial', 12, 'bold'), bg='white')
-            umbrales_frame.pack(fill='both', expand=True, padx=10, pady=10)
-            
-            # Treeview para mostrar umbrales
-            columns = ("Ubicación", "Sensor", "Temperatura Min", "Temperatura Max", "Humedad Min", "Humedad Max", "Tipo")
-            self.tree_umbrales_visualizar = ttk.Treeview(umbrales_frame, columns=columns, show="headings")
-            
-            # Configurar columnas
-            self.tree_umbrales_visualizar.heading("Ubicación", text="Ubicación")
-            self.tree_umbrales_visualizar.heading("Sensor", text="Sensor")
-            self.tree_umbrales_visualizar.heading("Temperatura Min", text="Temp Min (°C)")
-            self.tree_umbrales_visualizar.heading("Temperatura Max", text="Temp Max (°C)")
-            self.tree_umbrales_visualizar.heading("Humedad Min", text="Hum Min (%)")
-            self.tree_umbrales_visualizar.heading("Humedad Max", text="Hum Max (%)")
-            self.tree_umbrales_visualizar.heading("Tipo", text="Tipo")
-            
-            self.tree_umbrales_visualizar.column("Ubicación", width=150)
-            self.tree_umbrales_visualizar.column("Sensor", width=120)
-            self.tree_umbrales_visualizar.column("Temperatura Min", width=100)
-            self.tree_umbrales_visualizar.column("Temperatura Max", width=100)
-            self.tree_umbrales_visualizar.column("Humedad Min", width=100)
-            self.tree_umbrales_visualizar.column("Humedad Max", width=100)
-            self.tree_umbrales_visualizar.column("Tipo", width=100)
-            
-            # Scrollbar
-            scrollbar_umbrales = ttk.Scrollbar(umbrales_frame, orient="vertical", command=self.tree_umbrales_visualizar.yview)
-            self.tree_umbrales_visualizar.configure(yscrollcommand=scrollbar_umbrales.set)
-            
-            self.tree_umbrales_visualizar.pack(side="left", fill="both", expand=True)
-            scrollbar_umbrales.pack(side="right", fill="y")
-            
-            # Cargar umbrales
-            self.cargar_umbrales_en_treeview(self.tree_umbrales_visualizar)
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error configurando tab visualizar: {e}")
-    
-    def configurar_tab_configurar(self, tab):
-        """Configurar pestaña de configuración de umbrales"""
-        try:
-            # Usar la funcionalidad existente de configurar_umbrales pero en esta pestaña
-            # Frame para configuración
-            config_frame = tk.LabelFrame(tab, text="⚙️ Configuración de Umbrales", 
-                                       font=('Arial', 12, 'bold'), bg='white')
-            config_frame.pack(fill='x', padx=10, pady=10)
-            
-            # Frame interno para la configuración
-            config_inner = tk.Frame(config_frame, bg='white')
-            config_inner.pack(fill='x', padx=10, pady=10)
-            
-            # Tipo de configuración
-            tk.Label(config_inner, text="Tipo de configuración:", bg='white', font=('Arial', 10, 'bold')).pack(anchor='w')
-            
-            self.config_type_var = tk.StringVar(value="ubicacion")
-            config_type_frame = tk.Frame(config_inner, bg='white')
-            config_type_frame.pack(fill='x', pady=5)
-            
-            tk.Radiobutton(config_type_frame, text="🌍 Umbrales Globales", 
-                          variable=self.config_type_var, value="global", 
-                          command=self.cambiar_tipo_configuracion, bg='white').pack(side='left', padx=5)
-            
-            tk.Radiobutton(config_type_frame, text="📍 Umbrales por Ubicación", 
-                          variable=self.config_type_var, value="ubicacion", 
-                          command=self.cambiar_tipo_configuracion, bg='white').pack(side='left', padx=5)
-            
-            # Selector de ubicación
-            ubicacion_frame = tk.Frame(config_inner, bg='white')
-            ubicacion_frame.pack(fill='x', pady=5)
-            
-            tk.Label(ubicacion_frame, text="Ciudad:", bg='white').pack(side='left', padx=5)
-            self.entry_ciudad_umbrales = tk.Entry(ubicacion_frame, width=20)
-            self.entry_ciudad_umbrales.pack(side='left', padx=5)
-            
-            tk.Label(ubicacion_frame, text="País:", bg='white').pack(side='left', padx=5)
-            self.entry_pais_umbrales = tk.Entry(ubicacion_frame, width=20)
-            self.entry_pais_umbrales.pack(side='left', padx=5)
-            
-            # Cargar ubicaciones disponibles
-            self.cargar_ubicaciones_para_umbrales()
-            
-            # Frame para umbrales
-            self.umbrales_frame = tk.Frame(config_inner, bg='white')
-            self.umbrales_frame.pack(fill='x', pady=10)
-            
-            # Crear interfaz de umbrales
-            self.crear_interfaz_umbrales()
-            
-            # Botones de configuración
-            button_config_frame = tk.Frame(config_inner, bg='white')
-            button_config_frame.pack(fill='x', pady=10)
-            
-            tk.Button(button_config_frame, text="💾 Guardar Configuración", 
-                     command=self.guardar_configuracion_umbrales, 
-                     bg='#27ae60', fg='white', font=('Arial', 10)).pack(side='left', padx=5)
-            
-            tk.Button(button_config_frame, text="🔄 Cargar Actual", 
-                     command=self.cargar_configuracion_actual, 
-                     bg='#3498db', fg='white', font=('Arial', 10)).pack(side='left', padx=5)
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error configurando tab configurar: {e}")
-    
-    def configurar_tab_historial(self, tab):
-        """Configurar pestaña de historial de cambios"""
-        try:
-            # Frame para historial
-            historial_frame = tk.LabelFrame(tab, text="📊 Historial de Cambios de Umbrales", 
-                                          font=('Arial', 12, 'bold'), bg='white')
-            historial_frame.pack(fill='both', expand=True, padx=10, pady=10)
-            
-            # Treeview para historial
-            columns = ("Fecha", "Usuario", "Tipo", "Sensor/Global", "Cambio", "Valores Anteriores", "Valores Nuevos")
-            self.tree_historial = ttk.Treeview(historial_frame, columns=columns, show="headings")
-            
-            # Configurar columnas
-            self.tree_historial.heading("Fecha", text="Fecha")
-            self.tree_historial.heading("Usuario", text="Usuario")
-            self.tree_historial.heading("Tipo", text="Tipo")
-            self.tree_historial.heading("Sensor/Global", text="Sensor/Global")
-            self.tree_historial.heading("Cambio", text="Cambio")
-            self.tree_historial.heading("Valores Anteriores", text="Valores Anteriores")
-            self.tree_historial.heading("Valores Nuevos", text="Valores Nuevos")
-            
-            self.tree_historial.column("Fecha", width=120)
-            self.tree_historial.column("Usuario", width=100)
-            self.tree_historial.column("Tipo", width=100)
-            self.tree_historial.column("Sensor/Global", width=120)
-            self.tree_historial.column("Cambio", width=150)
-            self.tree_historial.column("Valores Anteriores", width=150)
-            self.tree_historial.column("Valores Nuevos", width=150)
-            
-            # Scrollbar
-            scrollbar_historial = ttk.Scrollbar(historial_frame, orient="vertical", command=self.tree_historial.yview)
-            self.tree_historial.configure(yscrollcommand=scrollbar_historial.set)
-            
-            self.tree_historial.pack(side="left", fill="both", expand=True)
-            scrollbar_historial.pack(side="right", fill="y")
-            
-            # Cargar historial
-            self.actualizar_historial_umbrales()
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error configurando tab historial: {e}")
-    
     def cargar_ubicaciones_para_umbrales(self):
         """Cargar ubicaciones disponibles para configuración de umbrales"""
         try:
@@ -1979,22 +1611,6 @@ Para soporte técnico, contacta al administrador del sistema.
                 self.entry_pais_umbrales.insert(0, pais)
         except Exception as e:
             self.agregar_log(f"❌ Error seleccionando ubicación: {e}")
-    
-    def actualizar_todas_las_pestanas(self, notebook):
-        """Actualizar todas las pestañas"""
-        try:
-            # Actualizar pestaña de visualización
-            if hasattr(self, 'tree_umbrales_visualizar'):
-                self.cargar_umbrales_en_treeview(self.tree_umbrales_visualizar)
-            
-            # Actualizar pestaña de historial
-            if hasattr(self, 'tree_historial'):
-                self.actualizar_historial_umbrales()
-            
-            self.agregar_log("✅ Todas las pestañas actualizadas")
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error actualizando pestañas: {e}")
     
     def cargar_umbrales_en_treeview(self, tree_umbrales):
         """Cargar umbrales en el TreeView"""
@@ -7269,49 +6885,80 @@ Datos históricos: {len(mediciones)} mediciones
     def agregar_sensor(self):
         """Agregar nuevo sensor"""
         try:
-            nombre = self.entry_nombre_sensor.get()
-            pais = self.combo_pais_sensor.get()
-            ciudad = self.combo_ciudad_sensor.get()
-            zona = self.combo_zona_sensor.get()
-            tipo = self.combo_tipo_sensor.get()
-            estado = self.combo_estado_sensor.get()
+            nombre = self.entry_nombre_sensor.get().strip()
+            pais = self.combo_pais_sensor.get().strip()
+            ciudad = self.combo_ciudad_sensor.get().strip()
+            zona = self.combo_zona_sensor.get().strip()
+            tipo = self.combo_tipo_sensor.get().strip()
+            estado = self.combo_estado_sensor.get().strip()
             
             if not nombre or not pais or not ciudad:
                 messagebox.showerror("Error", "Por favor complete todos los campos obligatorios (Nombre, País, Ciudad)")
                 return
             
-            # Construir ubicación en formato "Ciudad, Zona - País"
-            if zona and zona != "N/A":
-                ubicacion = f"{ciudad}, {zona} - {pais}"
-            else:
-                ubicacion = f"{ciudad} - {pais}"
+            if not self.mongodb_service or not self.mongodb_service.conectado:
+                messagebox.showerror("Error", "MongoDB Atlas no está conectado")
+                return
             
-            # Crear sensor en MongoDB Atlas
+            ubicacion_datos = {
+                "city": ciudad,
+                "country": pais
+            }
+            if zona and zona.lower() != "n/a":
+                ubicacion_datos["zone"] = zona
+            
+            sensores_existentes = list(self.mongodb_service.obtener_sensores() or [])
+            ids_existentes = {
+                sensor.get('sensor_id') for sensor in sensores_existentes if sensor.get('sensor_id')
+            }
+            
+            # Generar un ID único evitando colisiones
+            while True:
+                sensor_id = f"SEN-{uuid.uuid4().hex[:8].upper()}"
+                if sensor_id not in ids_existentes:
+                    break
+            
+            ubicacion_clave = normalize_location(ubicacion_datos)
+            tipo_clave = tipo.lower()
+            
+            for sensor in sensores_existentes:
+                clave_existente = normalize_location(sensor.get('location'))
+                tipo_existente = str(sensor.get('type', '')).strip().lower()
+                
+                if sensor.get('sensor_id') == sensor_id:
+                    messagebox.showerror("Error", "Ya existe un sensor con el mismo ID. Intente nuevamente.")
+                    return
+                
+                if clave_existente == ubicacion_clave and tipo_existente == tipo_clave:
+                    messagebox.showerror(
+                        "Error",
+                        "Ya existe un sensor del mismo tipo configurado para esta ubicación."
+                    )
+                    return
+            
             sensor_data = {
-                "sensor_id": f"SENSOR_{int(time.time())}",
+                "sensor_id": sensor_id,
                 "name": nombre,
-                "location": ubicacion,
+                "location": ubicacion_datos,
                 "type": tipo,
                 "status": estado.lower(),
                 "created_at": datetime.now().isoformat()
             }
             
-            if self.mongodb_service and self.mongodb_service.conectado:
-                self.mongodb_service.crear_sensor(sensor_data)
-                self.actualizar_lista_sensores()
-                self.cargar_sensores_para_combos()
-                
-                # Limpiar campos
-                self.entry_nombre_sensor.delete(0, tk.END)
-                self.combo_pais_sensor.set("")
-                self.combo_ciudad_sensor.set("")
-                self.combo_zona_sensor.set("Centro")
-                
-                messagebox.showinfo("Éxito", "Sensor agregado correctamente")
-                self.agregar_log(f"✅ Sensor agregado: {nombre} en {ubicacion}")
-            else:
-                messagebox.showerror("Error", "MongoDB Atlas no está conectado")
-                
+            self.mongodb_service.crear_sensor(sensor_data)
+            self.actualizar_lista_sensores()
+            self.cargar_sensores_para_combos()
+            
+            # Limpiar campos
+            self.entry_nombre_sensor.delete(0, tk.END)
+            self.combo_pais_sensor.set("")
+            self.combo_ciudad_sensor.set("")
+            self.combo_zona_sensor.set("Centro")
+            
+            ubicacion_mensaje = f"{ciudad}, {zona} - {pais}" if zona and zona.lower() != "n/a" else f"{ciudad} - {pais}"
+            messagebox.showinfo("Éxito", "Sensor agregado correctamente")
+            self.agregar_log(f"✅ Sensor agregado: {nombre} en {ubicacion_mensaje}")
+            
         except Exception as e:
             messagebox.showerror("Error", f"Error agregando sensor: {e}")
             self.agregar_log(f"❌ Error agregando sensor: {e}")
