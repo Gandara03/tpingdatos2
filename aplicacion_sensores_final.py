@@ -801,9 +801,9 @@ class AplicacionSensoresOnline:
         self.entry_fecha_control.insert(0, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         tk.Label(control_frame, text="Estado del Sensor:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
-        self.combo_estado_sensor = ttk.Combobox(control_frame, values=["OK", "Falla"], width=18, state='readonly')
-        self.combo_estado_sensor.grid(row=2, column=1, padx=5, pady=5)
-        self.combo_estado_sensor.set("OK")
+        self.combo_estado_control = ttk.Combobox(control_frame, values=["OK", "Falla"], width=18, state='readonly')
+        self.combo_estado_control.grid(row=2, column=1, padx=5, pady=5)
+        self.combo_estado_control.set("OK")
 
         tk.Label(control_frame, text="Observaciones:", bg='white').grid(row=3, column=0, padx=5, pady=5, sticky='nw')
         self.txt_obs_control = tk.Text(control_frame, width=30, height=4)
@@ -2378,13 +2378,22 @@ class AplicacionSensoresOnline:
                 return
 
             sensor_display = self.combo_sensor_control.get().strip() if hasattr(self, 'combo_sensor_control') else ''
-            estado_sensor = self.combo_estado_sensor.get().strip() if hasattr(self, 'combo_estado_sensor') else ''
+            estado_sensor = self.combo_estado_control.get().strip() if hasattr(self, 'combo_estado_control') else ''
             fecha_rev = self.entry_fecha_control.get().strip() if hasattr(self, 'entry_fecha_control') else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             observaciones = self.txt_obs_control.get("1.0", tk.END).strip() if hasattr(self, 'txt_obs_control') else ''
 
             if not sensor_display or not estado_sensor:
                 messagebox.showerror("Error", "Seleccione sensor y estado del sensor")
                 return
+
+            estado_control = estado_sensor.lower()
+            estado_normalizado = {
+                "ok": "activo",
+                "falla": "mantenimiento",
+                "activo": "activo",
+                "inactivo": "inactivo",
+                "mantenimiento": "mantenimiento"
+            }.get(estado_control, estado_control)
 
             # Mapear display a sensor_id intentando buscar por nombre
             sensor_id = None
@@ -2399,7 +2408,8 @@ class AplicacionSensoresOnline:
                 "control_id": control_id,
                 "sensor_id": sensor_id or sensor_display,
                 "reviewed_at": fecha_rev,
-                "sensor_state": estado_sensor.lower(),
+                "sensor_state": estado_normalizado,
+                "control_state": estado_control,
                 "observations": observaciones,
                 "reviewed_by": getattr(self, 'usuario_autenticado', None)
             }
@@ -2407,8 +2417,17 @@ class AplicacionSensoresOnline:
             if self.mongodb_service.crear_control(control_data):
                 self.agregar_log(f"📝 Control registrado para {sensor_display}")
 
+                if sensor_id:
+                    datos_actualizados = {
+                        "status": estado_normalizado,
+                        "updated_at": datetime.now().isoformat()
+                    }
+                    if self.mongodb_service.actualizar_sensor(sensor_id, datos_actualizados):
+                        self.agregar_log(f"🔄 Estado del sensor '{sensor_id}' actualizado a {estado_normalizado}")
+                        self.actualizar_lista_sensores()
+
                 # Disparar alerta de tipo sensor si hay falla
-                if estado_sensor.lower() == 'falla':
+                if estado_control == 'falla':
                     alert_id = f"ALERT_SENS_{int(time.time())}"
                     alerta_data = {
                         "alert_id": alert_id,
@@ -6932,7 +6951,7 @@ Datos históricos: {len(mediciones)} mediciones
                 if clave_existente == ubicacion_clave and tipo_existente == tipo_clave:
                     messagebox.showerror(
                         "Error",
-                        "Ya existe un sensor del mismo tipo configurado para esta ubicación."
+                        "Ya existe un sensor del mismo tipo configurado para esta ubicación, con el mismo tipo."
                     )
                     return
             
