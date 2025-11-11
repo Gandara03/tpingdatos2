@@ -7092,7 +7092,16 @@ Datos históricos: {len(mediciones)} mediciones
             item = self.tree_sensores.item(seleccionado[0])
             sensor_id = item['values'][0]
             sensor_nombre = item['values'][1]
+            estado_sensor = str(item['values'][4]).strip().lower() if len(item['values']) > 4 else ''
             sensor_tipo = item['values'][3]  # Tipo está en la cuarta columna
+
+            if estado_sensor != 'activo':
+                messagebox.showerror(
+                    "Sensor inactivo",
+                    f"El sensor '{sensor_nombre}' está en estado '{estado_sensor or 'desconocido'}'.\n"
+                    "Solo los sensores activos pueden generar datos de prueba."
+                )
+                return
             
             # Confirmar generación de datos
             respuesta = messagebox.askyesno(
