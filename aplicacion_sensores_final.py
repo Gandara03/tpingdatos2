@@ -764,21 +764,17 @@ class AplicacionSensoresOnline:
         self.combo_tipo_alerta.set("Temperatura Alta")
         self.combo_tipo_alerta.bind('<<ComboboxSelected>>', self.actualizar_umbral_climatico)
         
-        tk.Label(climatic_frame, text="Umbral:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
-        self.entry_umbral_alerta = tk.Entry(climatic_frame, width=28, state='readonly')
-        self.entry_umbral_alerta.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
-        
-        tk.Label(climatic_frame, text="Severidad:", bg='white').grid(row=3, column=0, padx=5, pady=5, sticky='w')
+        tk.Label(climatic_frame, text="Severidad:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
         self.combo_severidad_alerta = ttk.Combobox(climatic_frame, values=["Baja", "Media", "Alta", "Crítica"], width=27, state='readonly')
-        self.combo_severidad_alerta.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
+        self.combo_severidad_alerta.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
         self.combo_severidad_alerta.set("Media")
         
-        tk.Label(climatic_frame, text="Mensaje:", bg='white').grid(row=4, column=0, padx=5, pady=5, sticky='nw')
+        tk.Label(climatic_frame, text="Mensaje:", bg='white').grid(row=3, column=0, padx=5, pady=5, sticky='nw')
         self.entry_mensaje_alerta = tk.Entry(climatic_frame, width=40)
-        self.entry_mensaje_alerta.grid(row=4, column=1, padx=5, pady=5, sticky='ew')
+        self.entry_mensaje_alerta.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
         
         botones_clima = tk.Frame(climatic_frame, bg='white')
-        botones_clima.grid(row=5, column=0, columnspan=2, pady=10, sticky='ew')
+        botones_clima.grid(row=4, column=0, columnspan=2, pady=10, sticky='ew')
         botones_clima.columnconfigure((0, 1, 2, 3), weight=1)
         
         tk.Button(botones_clima, text="➕ Crear Alerta", 
@@ -1118,6 +1114,7 @@ class AplicacionSensoresOnline:
             alerta_data = {
                 "alert_id": alert_id,
                 "sensor_id": sensor_id,
+                "sensor_display": self.obtener_display_sensor(sensor_id),
                 "categoria": "Climática",
                 "type": tipo_alerta,
                 "severity": severity,
@@ -2284,6 +2281,7 @@ class AplicacionSensoresOnline:
                 tipo_icono = "🌡️" if categoria == "Climática" else "🔧"
                 
                 # Ubicación o sensor
+                sensor_display = alerta.get('sensor_display') or alerta.get('sensor_id', 'N/A')
                 if categoria == "Climática":
                     # Para alertas climáticas, mostrar ubicación
                     location = alerta.get('location', {})
@@ -2293,9 +2291,11 @@ class AplicacionSensoresOnline:
                         ubicacion = f"{ciudad}, {pais}"
                     else:
                         ubicacion = str(location)
+                    if not ubicacion or ubicacion.strip() in {"", "N/A", "N/A, N/A"}:
+                        ubicacion = sensor_display
                 else:
                     # Para alertas de sensor, mostrar sensor ID
-                    ubicacion = alerta.get('sensor_id', 'N/A')
+                    ubicacion = sensor_display
                 
                 # Descripción mejorada
                 descripcion = alerta.get('message', '')
@@ -2445,6 +2445,22 @@ class AplicacionSensoresOnline:
 
         return ciudad, pais
 
+    def obtener_display_sensor(self, sensor_id):
+        """Obtener el texto formateado del sensor a partir de su ID."""
+        try:
+            if not sensor_id:
+                return ""
+            if not self.mongodb_service or not self.mongodb_service.conectado:
+                return sensor_id
+
+            sensores = self.mongodb_service.obtener_sensores()
+            for sensor in sensores:
+                if sensor.get('sensor_id') == sensor_id:
+                    return self.formatear_nombre_sensor(sensor)
+        except Exception as exc:
+            self.agregar_log(f"⚠️ No se pudo obtener display del sensor {sensor_id}: {exc}")
+        return sensor_id
+
     def normalizar_valor_umbral(self, valor):
         """Convertir valores almacenados a float para usarlos como umbrales."""
         if valor is None:
@@ -2494,13 +2510,8 @@ class AplicacionSensoresOnline:
             tipo_alerta = self.combo_tipo_alerta.get() if hasattr(self, 'combo_tipo_alerta') else ""
 
             self.umbral_actual_alerta = None
-            if hasattr(self, 'entry_umbral_alerta'):
-                self.entry_umbral_alerta.config(state='normal')
-                self.entry_umbral_alerta.delete(0, tk.END)
-
+            
             if not sensor_id or not tipo_alerta:
-                if hasattr(self, 'entry_umbral_alerta'):
-                    self.entry_umbral_alerta.config(state='readonly')
                 return
 
             thresholds = self.mongodb_service.obtener_umbrales_efectivos_por_ubicacion(sensor_id)
@@ -2514,16 +2525,10 @@ class AplicacionSensoresOnline:
 
             if umbral_valor is not None:
                 self.umbral_actual_alerta = float(umbral_valor)
-                if hasattr(self, 'entry_umbral_alerta'):
-                    self.entry_umbral_alerta.insert(0, f"{self.umbral_actual_alerta}")
             else:
                 self.umbral_actual_alerta = None
 
-            if hasattr(self, 'entry_umbral_alerta'):
-                self.entry_umbral_alerta.config(state='readonly')
         except Exception as exc:
-            if hasattr(self, 'entry_umbral_alerta'):
-                self.entry_umbral_alerta.config(state='readonly')
             self.agregar_log(f"❌ Error actualizando umbral climático: {exc}")
 
     def registrar_control_funcionamiento(self):
@@ -8149,17 +8154,10 @@ Datos históricos: {len(mediciones)} mediciones
             severidad = self.combo_severidad_alerta.get()
             mensaje = self.entry_mensaje_alerta.get()
             umbral = self.umbral_actual_alerta
+            ciudad_alerta, pais_alerta = self.obtener_ciudad_pais_sensor(sensor)
             
             if not sensor or not tipo or not severidad:
                 messagebox.showerror("Error", "Complete todos los campos obligatorios")
-                return
-            
-            if umbral is None:
-                self.actualizar_umbral_climatico()
-                umbral = self.umbral_actual_alerta
-            
-            if umbral is None:
-                messagebox.showerror("Error", "No se pudo determinar el umbral para la alerta seleccionada")
                 return
             
             # Generar ID único para la alerta
@@ -8172,17 +8170,20 @@ Datos históricos: {len(mediciones)} mediciones
             alerta_data = {
                 "alert_id": alert_id,
                 "sensor_id": sensor,
+                "sensor_display": sensor_seleccionado,
                 "categoria": categoria,
                 "type": tipo,
                 "severity": severidad.lower(),
                 "status": "pendiente",
-                "threshold": float(umbral),
                 "message": mensaje_final,
                 "created_at": datetime.now().isoformat(),
                 "created_by": self.usuario_autenticado,
                 "updated_at": datetime.now().isoformat(),
                 "updated_by": self.usuario_autenticado
             }
+
+            if ciudad_alerta or pais_alerta:
+                alerta_data["location"] = {"city": ciudad_alerta or "N/A", "country": pais_alerta or "N/A"}
             
             # Diferenciar entre alertas de sensor y climáticas
             if categoria == "Sensor":
@@ -8200,7 +8201,6 @@ Datos históricos: {len(mediciones)} mediciones
                     self.agregar_log(f"✅ Alerta {categoria} creada: {alert_id}")
                     
                     # Limpiar campos
-                    self.entry_umbral_alerta.delete(0, tk.END)
                     self.entry_mensaje_alerta.delete(0, tk.END)
                 else:
                     messagebox.showerror("Error", "No se pudo crear la alerta")
@@ -8314,17 +8314,10 @@ Datos históricos: {len(mediciones)} mediciones
             categoria = "Climática"
             tipo = self.combo_tipo_alerta.get()
             umbral_valor = self.umbral_actual_alerta
+            ciudad_alerta, pais_alerta = self.obtener_ciudad_pais_sensor(sensor)
             
             if not sensor or not tipo:
                 messagebox.showerror("Error", "Seleccione un sensor y tipo de alerta")
-                return
-            
-            if umbral_valor is None:
-                self.actualizar_umbral_climatico()
-                umbral_valor = self.umbral_actual_alerta
-            
-            if umbral_valor is None:
-                messagebox.showerror("Error", "No se pudo determinar el umbral para la alerta seleccionada")
                 return
             
             # Obtener lectura real del sensor
@@ -8338,16 +8331,16 @@ Datos históricos: {len(mediciones)} mediciones
             alerta_disparada = False
             mensaje_alerta = ""
             
-            if tipo == "Temperatura Alta" and valor_actual > umbral_valor:
+            if umbral_valor is not None and tipo == "Temperatura Alta" and valor_actual > umbral_valor:
                 alerta_disparada = True
                 mensaje_alerta = f"Temperatura crítica: {valor_actual}°C (umbral: {umbral_valor}°C)"
-            elif tipo == "Temperatura Baja" and valor_actual < umbral_valor:
+            elif umbral_valor is not None and tipo == "Temperatura Baja" and valor_actual < umbral_valor:
                 alerta_disparada = True
                 mensaje_alerta = f"Temperatura baja: {valor_actual}°C (umbral: {umbral_valor}°C)"
-            elif tipo == "Humedad Alta" and valor_actual > umbral_valor:
+            elif umbral_valor is not None and tipo == "Humedad Alta" and valor_actual > umbral_valor:
                 alerta_disparada = True
                 mensaje_alerta = f"Humedad alta: {valor_actual}% (umbral: {umbral_valor}%)"
-            elif tipo == "Humedad Baja" and valor_actual < umbral_valor:
+            elif umbral_valor is not None and tipo == "Humedad Baja" and valor_actual < umbral_valor:
                 alerta_disparada = True
                 mensaje_alerta = f"Humedad baja: {valor_actual}% (umbral: {umbral_valor}%)"
             
@@ -8358,6 +8351,7 @@ Datos históricos: {len(mediciones)} mediciones
                 alerta_data = {
                     "alert_id": alert_id,
                     "sensor_id": sensor,
+                    "sensor_display": sensor_seleccionado or self.obtener_display_sensor(sensor),
                     "categoria": categoria,
                     "type": tipo,
                     "severity": "alta",  # Alertas manuales son de alta severidad
@@ -8372,6 +8366,9 @@ Datos históricos: {len(mediciones)} mediciones
                     "resolucion_manual": True,
                     "auto_resolucion": False
                 }
+
+                if ciudad_alerta or pais_alerta:
+                    alerta_data["location"] = {"city": ciudad_alerta or "N/A", "country": pais_alerta or "N/A"}
                 
                 # Guardar en MongoDB
                 if self.mongodb_service and self.mongodb_service.conectado:
