@@ -15,6 +15,14 @@ import os
 import sys
 import uuid
 
+try:
+    from tkcalendar import DateEntry  # type: ignore
+except ImportError as exc:  # pragma: no cover - configuración obligatoria
+    raise ImportError(
+        "La dependencia 'tkcalendar' es obligatoria para el selector de fechas. "
+        "Instálala con 'pip install tkcalendar'."
+    ) from exc
+
 # Agregar el directorio backend al path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'backend'))
 
@@ -108,6 +116,17 @@ class AplicacionSensoresOnline:
         except Exception as e:
             print(f"ERROR Error inicializando MongoDB Atlas: {e}")
     
+    def obtener_valor_fecha(self, widget):
+        """Obtener fecha de un widget DateEntry o Entry normal en formato YYYY-MM-DD."""
+        try:
+            if isinstance(widget, DateEntry):
+                return widget.get_date().strftime("%Y-%m-%d")
+            if hasattr(widget, "get"):
+                return widget.get().strip()
+        except Exception as exc:
+            self.agregar_log(f"⚠️ Error leyendo fecha desde widget: {exc}")
+        return ""
+
     def inicializar_neo4j(self):
         """Inicializar Neo4j Aura"""
         try:
@@ -592,14 +611,14 @@ class AplicacionSensoresOnline:
         
         # Rango de fechas
         tk.Label(config_inner, text="Desde:", bg='white').grid(row=0, column=2, padx=5, pady=5, sticky='w')
-        self.entry_fecha_desde = tk.Entry(config_inner, width=15)
+        self.entry_fecha_desde = DateEntry(config_inner, width=13, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_desde.set_date(datetime.now() - timedelta(days=7))
         self.entry_fecha_desde.grid(row=0, column=3, padx=5, pady=5)
-        self.entry_fecha_desde.insert(0, (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"))
         
         tk.Label(config_inner, text="Hasta:", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
-        self.entry_fecha_hasta = tk.Entry(config_inner, width=15)
+        self.entry_fecha_hasta = DateEntry(config_inner, width=13, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_hasta.set_date(datetime.now())
         self.entry_fecha_hasta.grid(row=1, column=3, padx=5, pady=5)
-        self.entry_fecha_hasta.insert(0, datetime.now().strftime("%Y-%m-%d"))
         
         # Tipo de análisis
         tk.Label(config_inner, text="Tipo:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
@@ -7551,8 +7570,8 @@ Datos históricos: {len(mediciones)} mediciones
         try:
             ciudad_seleccionada = self.combo_ciudad_analisis.get()
             ciudad = self.extraer_ciudad_del_formato(ciudad_seleccionada)
-            fecha_desde = self.entry_fecha_desde.get()
-            fecha_hasta = self.entry_fecha_hasta.get()
+            fecha_desde = self.obtener_valor_fecha(self.entry_fecha_desde)
+            fecha_hasta = self.obtener_valor_fecha(self.entry_fecha_hasta)
             tipo_analisis = self.combo_tipo_analisis.get()
             
             if not ciudad:
@@ -7798,8 +7817,8 @@ Datos históricos: {len(mediciones)} mediciones
         try:
             ciudad_seleccionada = self.combo_ciudad_analisis.get()
             ciudad = self.extraer_ciudad_del_formato(ciudad_seleccionada)
-            fecha_desde = self.entry_fecha_desde.get()
-            fecha_hasta = self.entry_fecha_hasta.get()
+            fecha_desde = self.obtener_valor_fecha(self.entry_fecha_desde)
+            fecha_hasta = self.obtener_valor_fecha(self.entry_fecha_hasta)
             tipo_analisis = self.combo_tipo_analisis.get()
             
             if not ciudad:
@@ -7872,8 +7891,8 @@ Datos históricos: {len(mediciones)} mediciones
         try:
             ciudad_seleccionada = self.combo_ciudad_analisis.get()
             ciudad = self.extraer_ciudad_del_formato(ciudad_seleccionada)
-            fecha_desde = self.entry_fecha_desde.get()
-            fecha_hasta = self.entry_fecha_hasta.get()
+            fecha_desde = self.obtener_valor_fecha(self.entry_fecha_desde)
+            fecha_hasta = self.obtener_valor_fecha(self.entry_fecha_hasta)
             
             if not ciudad:
                 messagebox.showerror("Error", "Seleccione una ciudad")

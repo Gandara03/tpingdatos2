@@ -2364,19 +2364,41 @@ class ServicioMongoDBOptimizado:
                         "$gte": fecha_inicio_dt,
                         "$lte": fecha_fin_dt
                     },
-                    "temperature": {"$exists": True, "$ne": None}
+                    "$or": [
+                        {"temperature": {"$exists": True, "$ne": None}},
+                        {"temperature_max": {"$exists": True, "$ne": None}},
+                        {"temperature_min": {"$exists": True, "$ne": None}}
+                    ]
                 }).sort("timestamp", 1)
                 
                 mediciones_lista = list(mediciones)
                 mediciones_totales += len(mediciones_lista)
                 
                 for medicion in mediciones_lista:
-                    temp = medicion["temperature"]
+                    temp = medicion.get("temperature")
+                    temp_max = medicion.get("temperature_max")
+                    temp_min = medicion.get("temperature_min")
+
+                    if temp is None:
+                        if temp_max is not None and temp_min is not None:
+                            temp = (temp_max + temp_min) / 2
+                        elif temp_max is not None:
+                            temp = temp_max
+                        elif temp_min is not None:
+                            temp = temp_min
+
+                    temp_max_val = temp_max if temp_max is not None else temp
+                    temp_min_val = temp_min if temp_min is not None else temp
+
+                    if temp is None:
+                        # Si no podemos determinar una temperatura representativa, omitir el registro
+                        continue
+
                     datos_temperatura.append({
                         "fecha": medicion["timestamp"].strftime("%Y-%m-%d"),
-                        "temp_max": temp,
-                        "temp_min": temp,
-                        "temperatura": temp,
+                        "temp_max": round(float(temp_max_val), 2) if temp_max_val is not None else None,
+                        "temp_min": round(float(temp_min_val), 2) if temp_min_val is not None else None,
+                        "temperatura": round(float(temp), 2),
                         "humedad": medicion.get("humidity", 0),
                         "ubicacion": ubicacion,
                         "sensor_id": sensor_id,
