@@ -1793,13 +1793,19 @@ class ServicioMongoDBOptimizado:
             # Si no hay umbrales específicos de ubicación, usar globales
             umbrales_globales = self.obtener_umbrales_globales()
             if umbrales_globales:
-                return umbrales_globales.get("thresholds", {})
+                thresholds_globales = umbrales_globales.get("thresholds", {})
+                if thresholds_globales:
+                    # Persistir los umbrales globales como configuración inicial de la ubicación
+                    self.guardar_umbrales_ubicacion(ciudad, pais, thresholds_globales)
+                    return thresholds_globales
             
             # Valores por defecto si no hay configuración
-            return {
+            thresholds_default = {
                 "Temperatura": {"min": 5, "max": 35},
                 "Humedad": {"min": 30, "max": 80}
             }
+            self.guardar_umbrales_ubicacion(ciudad, pais, thresholds_default)
+            return thresholds_default
             
         except Exception as e:
             print(f"❌ Error obteniendo umbrales efectivos por ubicación para {sensor_id}: {e}")
