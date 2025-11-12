@@ -13,8 +13,21 @@ import threading
 import time
 import os
 import sys
-import asyncio
 import uuid
+from decimal import Decimal, InvalidOperation
+
+try:
+    from bson.decimal128 import Decimal128
+except ImportError:  # pragma: no cover - dependencia opcional
+    Decimal128 = None
+
+try:
+    from tkcalendar import DateEntry  # type: ignore
+except ImportError as exc:  # pragma: no cover - configuración obligatoria
+    raise ImportError(
+        "La dependencia 'tkcalendar' es obligatoria para el selector de fechas. "
+        "Instálala con 'pip install tkcalendar'."
+    ) from exc
 
 # Agregar el directorio backend al path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'backend'))
@@ -27,6 +40,8 @@ try:
 except ImportError as e:
     MONGODB_ATLAS_DISPONIBLE = False
     print(f"ERROR MongoDB Atlas no disponible: {e}")
+
+from sensor_setup import ensure_initial_sensors, normalize_location
 
 try:
     from backend.app.servicio_neo4j_optimizado import ServicioNeo4jOptimizado
@@ -106,6 +121,17 @@ class AplicacionSensoresOnline:
                 
         except Exception as e:
             print(f"ERROR Error inicializando MongoDB Atlas: {e}")
+    
+    def obtener_valor_fecha(self, widget):
+        """Obtener fecha de un widget DateEntry o Entry normal en formato YYYY-MM-DD."""
+        try:
+            if isinstance(widget, DateEntry):
+                return widget.get_date().strftime("%Y-%m-%d")
+            if hasattr(widget, "get"):
+                return widget.get().strip()
+        except Exception as exc:
+            self.agregar_log(f"⚠️ Error leyendo fecha desde widget: {exc}")
+        return ""
     
     def inicializar_neo4j(self):
         """Inicializar Neo4j Aura"""
@@ -214,73 +240,10 @@ class AplicacionSensoresOnline:
             print("OK Usuarios iniciales creados correctamente")
             
             # Crear sensores iniciales
-            self.crear_sensores_iniciales()
+            ensure_initial_sensors(self.mongodb_service)
             
         except Exception as e:
             print(f"ERROR Error creando usuarios iniciales: {e}")
-    
-    def crear_sensores_iniciales(self):
-        """Verificar y cargar sensores desde MongoDB"""
-        try:
-            if not self.mongodb_service or not self.mongodb_service.conectado:
-                print("ERROR MongoDB Atlas no disponible para cargar sensores")
-                return
-            
-            # Obtener sensores existentes desde MongoDB
-            sensores_existentes = self.mongodb_service.obtener_sensores()
-            if sensores_existentes:
-                print(f"OK Sensores cargados desde MongoDB: {len(sensores_existentes)} sensores")
-                return
-            
-            # Si no hay sensores, crear algunos básicos usando el servicio
-            print("⚠️ No hay sensores en MongoDB, creando sensores básicos...")
-            self.crear_sensores_basicos()
-                
-        except Exception as e:
-            print(f"ERROR cargando sensores: {e}")
-    
-    def crear_sensores_basicos(self):
-        """Crear sensores básicos usando el servicio de MongoDB"""
-        try:
-            # Crear sensores básicos usando el servicio
-            sensores_basicos = [
-                {
-                    "sensor_id": "SENSOR_BA_001",
-                    "name": "Sensor Buenos Aires Centro",
-                    "location": "Buenos Aires, Argentina",
-                    "type": "Temperatura",
-                    "status": "activo",
-                    "description": "Sensor de temperatura en el centro de Buenos Aires",
-                    "coordinates": {"lat": -34.6037, "lng": -58.3816}
-                },
-                {
-                    "sensor_id": "SENSOR_CBA_001",
-                    "name": "Sensor Córdoba Norte",
-                    "location": "Córdoba, Argentina",
-                    "type": "Humedad",
-                    "status": "activo",
-                    "description": "Sensor de humedad en el norte de Córdoba",
-                    "coordinates": {"lat": -31.4201, "lng": -64.1888}
-                },
-                {
-                    "sensor_id": "SENSOR_ROS_001",
-                    "name": "Sensor Rosario Sur",
-                    "location": "Rosario, Argentina",
-                    "type": "Ambos",
-                    "status": "activo",
-                    "description": "Sensor combinado de temperatura y humedad en Rosario",
-                    "coordinates": {"lat": -32.9442, "lng": -60.6505}
-                }
-            ]
-            
-            # Crear sensores usando el servicio
-            for sensor in sensores_basicos:
-                self.mongodb_service.crear_sensor(sensor)
-            
-            print(f"OK Sensores básicos creados: {len(sensores_basicos)} sensores")
-            
-        except Exception as e:
-            print(f"ERROR creando sensores básicos: {e}")
     
     def crear_interfaz_basica(self):
         """Crear interfaz básica (solo header inicialmente)"""
@@ -498,137 +461,6 @@ class AplicacionSensoresOnline:
             self.agregar_log(f"❌ Error en actualización del sistema: {e}")
             messagebox.showerror("Error", f"Error actualizando sistema: {e}")
     
-    def mostrar_estadisticas_generales(self):
-        """Mostrar estadísticas generales del sistema"""
-        try:
-            if not self.mongodb_service or not self.mongodb_service.conectado:
-                messagebox.showerror("Error", "MongoDB no está disponible")
-                return
-            
-            # Crear ventana de estadísticas
-            stats_window = tk.Toplevel(self.root)
-            stats_window.title("Estadísticas Generales del Sistema")
-            stats_window.geometry("600x400")
-            stats_window.configure(bg='white')
-            stats_window.transient(self.root)
-            stats_window.grab_set()
-            
-            # Centrar ventana
-            stats_window.geometry("+%d+%d" % (self.root.winfo_rootx() + 50, self.root.winfo_rooty() + 50))
-            
-            tk.Label(stats_window, text="📊 Estadísticas Generales", 
-                    font=('Arial', 16, 'bold'), bg='white').pack(pady=10)
-            
-            # Frame principal con scroll
-            main_frame = tk.Frame(stats_window, bg='white')
-            main_frame.pack(fill='both', expand=True, padx=20, pady=10)
-            
-            # Crear área de texto con scroll
-            texto_stats = scrolledtext.ScrolledText(main_frame, height=20, width=70)
-            texto_stats.pack(fill='both', expand=True)
-            
-            # Obtener estadísticas
-            sensores = self.mongodb_service.obtener_sensores()
-            mediciones = self.mongodb_service.obtener_mediciones()
-            alertas = self.mongodb_service.obtener_alertas()
-            usuarios = self.mongodb_service.obtener_usuarios()
-            
-            # Generar reporte
-            texto_stats.insert(tk.END, "📈 RESUMEN GENERAL DEL SISTEMA\n")
-            texto_stats.insert(tk.END, "=" * 50 + "\n\n")
-            
-            texto_stats.insert(tk.END, f"🔢 Total de Sensores: {len(sensores)}\n")
-            texto_stats.insert(tk.END, f"📊 Total de Mediciones: {len(mediciones)}\n")
-            texto_stats.insert(tk.END, f"🚨 Total de Alertas: {len(alertas)}\n")
-            texto_stats.insert(tk.END, f"👥 Total de Usuarios: {len(usuarios)}\n\n")
-            
-            # Sensores por estado
-            sensores_activos = [s for s in sensores if s.get('status') == 'activo']
-            texto_stats.insert(tk.END, f"✅ Sensores Activos: {len(sensores_activos)}\n")
-            texto_stats.insert(tk.END, f"❌ Sensores Inactivos: {len(sensores) - len(sensores_activos)}\n\n")
-            
-            # Alertas por estado
-            alertas_pendientes = [a for a in alertas if a.get('status') == 'pendiente']
-            texto_stats.insert(tk.END, f"⏳ Alertas Pendientes: {len(alertas_pendientes)}\n")
-            texto_stats.insert(tk.END, f"✅ Alertas Resueltas: {len(alertas) - len(alertas_pendientes)}\n\n")
-            
-            # Usuarios por rol
-            usuarios_activos = [u for u in usuarios if u.get('status') == 'activo']
-            texto_stats.insert(tk.END, f"👤 Usuarios Activos: {len(usuarios_activos)}\n")
-            texto_stats.insert(tk.END, f"🔒 Usuarios Inactivos: {len(usuarios) - len(usuarios_activos)}\n\n")
-            
-            texto_stats.insert(tk.END, f"📅 Última actualización: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            
-            self.agregar_log("📊 Estadísticas generales mostradas")
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error mostrando estadísticas: {e}")
-            messagebox.showerror("Error", f"Error mostrando estadísticas: {e}")
-    
-    def mostrar_ayuda(self):
-        """Mostrar ayuda del sistema"""
-        help_text = """
-🏠 SISTEMA DE GESTIÓN DE SENSORES - AYUDA
-
-📋 MÓDULOS DISPONIBLES:
-
-📊 Sensores: Gestionar sensores del sistema
-   • Agregar, editar y eliminar sensores
-   • Configurar ubicaciones y tipos
-   • Generar datos de prueba
-
-📈 Análisis: Analizar datos de sensores
-   • Seleccionar país y ciudad
-   • Configurar rangos de fechas
-   • Generar gráficos y reportes
-
-📋 Informes: Generar reportes y estadísticas
-   • Diferentes tipos de informes
-   • Exportar en múltiples formatos
-   • Análisis por ubicación
-
-🚨 Alertas: Configurar y gestionar alertas
-   • Crear alertas personalizadas
-   • Configurar umbrales
-   • Gestionar estados
-
-💰 Facturación: Gestionar facturas y pagos
-   • Ver cuentas corrientes
-   • Generar facturas
-   • Procesar pagos
-
-💬 Comunicación: Mensajes y notificaciones
-   • Enviar mensajes
-   • Crear grupos
-   • Gestionar notificaciones
-
-⚙️ Procesos: Procesos automatizados
-   • Configurar procesos
-   • Monitorear ejecución
-   • Gestionar colas
-
-🔧 Servicios: Servicios del sistema
-   • Configurar servicios
-   • Monitorear estado
-   • Gestionar recursos
-
-⚙️ Configuración: Configuración del sistema
-   • Parámetros generales
-   • Configuración de base de datos
-   • Logs del sistema
-
-💡 CONSEJOS:
-• Usa los botones de navegación para moverte entre módulos
-• Revisa los logs para información detallada
-• Actualiza el sistema regularmente
-• Contacta al administrador si necesitas ayuda
-
-🔗 SOPORTE:
-Para soporte técnico, contacta al administrador del sistema.
-        """
-        
-        messagebox.showinfo("Ayuda del Sistema", help_text)
-        self.agregar_log("❓ Ayuda del sistema mostrada")
     
     def crear_tab_sensores(self):
         """Crear tab de gestión de sensores"""
@@ -785,14 +617,14 @@ Para soporte técnico, contacta al administrador del sistema.
         
         # Rango de fechas
         tk.Label(config_inner, text="Desde:", bg='white').grid(row=0, column=2, padx=5, pady=5, sticky='w')
-        self.entry_fecha_desde = tk.Entry(config_inner, width=15)
+        self.entry_fecha_desde = DateEntry(config_inner, width=13, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_desde.set_date(datetime.now() - timedelta(days=7))
         self.entry_fecha_desde.grid(row=0, column=3, padx=5, pady=5)
-        self.entry_fecha_desde.insert(0, (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"))
         
         tk.Label(config_inner, text="Hasta:", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
-        self.entry_fecha_hasta = tk.Entry(config_inner, width=15)
+        self.entry_fecha_hasta = DateEntry(config_inner, width=13, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_hasta.set_date(datetime.now())
         self.entry_fecha_hasta.grid(row=1, column=3, padx=5, pady=5)
-        self.entry_fecha_hasta.insert(0, datetime.now().strftime("%Y-%m-%d"))
         
         # Tipo de análisis
         tk.Label(config_inner, text="Tipo:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
@@ -855,14 +687,14 @@ Para soporte técnico, contacta al administrador del sistema.
         self.combo_pais_ciudad_informe.grid(row=0, column=3, padx=5, pady=5)
         
         tk.Label(config_inner, text="Fecha Inicio:", bg='white').grid(row=1, column=0, padx=5, pady=5, sticky='w')
-        self.entry_fecha_inicio = tk.Entry(config_inner, width=20)
+        self.entry_fecha_inicio = DateEntry(config_inner, width=18, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_inicio.set_date(datetime.now() - timedelta(days=7))
         self.entry_fecha_inicio.grid(row=1, column=1, padx=5, pady=5)
-        self.entry_fecha_inicio.insert(0, (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"))
         
         tk.Label(config_inner, text="Fecha Fin:", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
-        self.entry_fecha_fin = tk.Entry(config_inner, width=20)
+        self.entry_fecha_fin = DateEntry(config_inner, width=18, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_fin.set_date(datetime.now())
         self.entry_fecha_fin.grid(row=1, column=3, padx=5, pady=5)
-        self.entry_fecha_fin.insert(0, datetime.now().strftime("%Y-%m-%d"))
         
         tk.Label(config_inner, text="Agrupación:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
         self.combo_agrupacion = ttk.Combobox(config_inner, values=["Diaria", "Semanal", "Mensual", "Anual"], width=20)
@@ -912,91 +744,94 @@ Para soporte técnico, contacta al administrador del sistema.
         config_inner = tk.Frame(config_frame, bg='white')
         config_inner.pack(fill='x', padx=10, pady=10)
         
-        # Configuración de umbrales
-        tk.Label(config_inner, text="Sensor:", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
-        self.combo_sensor_alerta = ttk.Combobox(config_inner, width=20)
-        self.combo_sensor_alerta.grid(row=0, column=1, padx=5, pady=5)
+        top_frame = tk.Frame(config_inner, bg='white')
+        top_frame.pack(fill='x', expand=True, padx=0, pady=0)
         
-        tk.Label(config_inner, text="Categoría:", bg='white').grid(row=0, column=2, padx=5, pady=5, sticky='w')
-        self.combo_categoria_alerta = ttk.Combobox(config_inner, values=["Climática", "Sensor"], width=18)
-        self.combo_categoria_alerta.grid(row=0, column=3, padx=5, pady=5)
-        self.combo_categoria_alerta.set("Climática")
+        # --- Bloque: Alertas Climáticas ---
+        climatic_frame = tk.LabelFrame(top_frame, text="Alertas Climáticas", 
+                                     font=('Arial', 12, 'bold'), bg='white')
+        climatic_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        climatic_frame.grid_columnconfigure(1, weight=1)
         
-        tk.Label(config_inner, text="Tipo:", bg='white').grid(row=1, column=0, padx=5, pady=5, sticky='w')
-        self.combo_tipo_alerta = ttk.Combobox(config_inner, values=["Temperatura Alta", "Temperatura Baja", "Humedad Alta", "Humedad Baja"], width=20)
-        self.combo_tipo_alerta.grid(row=1, column=1, padx=5, pady=5)
+        tk.Label(climatic_frame, text="Sensor:", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        self.combo_sensor_alerta = ttk.Combobox(climatic_frame, width=25)
+        self.combo_sensor_alerta.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
+        self.combo_sensor_alerta.bind('<<ComboboxSelected>>', self.actualizar_umbral_climatico)
         
-        tk.Label(config_inner, text="Umbral:", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
-        self.entry_umbral_alerta = tk.Entry(config_inner, width=20)
-        self.entry_umbral_alerta.grid(row=1, column=3, padx=5, pady=5)
+        tk.Label(climatic_frame, text="Tipo:", bg='white').grid(row=1, column=0, padx=5, pady=5, sticky='w')
+        self.combo_tipo_alerta = ttk.Combobox(climatic_frame, values=["Temperatura Alta", "Temperatura Baja", "Humedad Alta", "Humedad Baja"], width=27, state='readonly')
+        self.combo_tipo_alerta.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
+        self.combo_tipo_alerta.set("Temperatura Alta")
+        self.combo_tipo_alerta.bind('<<ComboboxSelected>>', self.actualizar_umbral_climatico)
         
-        tk.Label(config_inner, text="Severidad:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
-        self.combo_severidad_alerta = ttk.Combobox(config_inner, values=["Baja", "Media", "Alta", "Crítica"], width=20)
-        self.combo_severidad_alerta.grid(row=2, column=1, padx=5, pady=5)
+        tk.Label(climatic_frame, text="Severidad:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+        self.combo_severidad_alerta = ttk.Combobox(climatic_frame, values=["Baja", "Media", "Alta", "Crítica"], width=27, state='readonly')
+        self.combo_severidad_alerta.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
         self.combo_severidad_alerta.set("Media")
         
-        tk.Label(config_inner, text="Estado:", bg='white').grid(row=2, column=2, padx=5, pady=5, sticky='w')
-        self.combo_estado_alerta = ttk.Combobox(config_inner, values=["Pendiente", "En Proceso", "Resuelta", "Cerrada"], width=18)
-        self.combo_estado_alerta.grid(row=2, column=3, padx=5, pady=5)
-        self.combo_estado_alerta.set("Pendiente")
+        tk.Label(climatic_frame, text="Mensaje:", bg='white').grid(row=3, column=0, padx=5, pady=5, sticky='nw')
+        self.entry_mensaje_alerta = tk.Entry(climatic_frame, width=40)
+        self.entry_mensaje_alerta.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
         
-        tk.Label(config_inner, text="Mensaje:", bg='white').grid(row=3, column=0, padx=5, pady=5, sticky='w')
-        self.entry_mensaje_alerta = tk.Entry(config_inner, width=60)
-        self.entry_mensaje_alerta.grid(row=3, column=1, columnspan=3, padx=5, pady=5, sticky='ew')
+        botones_clima = tk.Frame(climatic_frame, bg='white')
+        botones_clima.grid(row=4, column=0, columnspan=2, pady=10, sticky='ew')
+        botones_clima.columnconfigure((0, 1, 2, 3), weight=1)
         
-        # Botones - Primera fila: Gestión de Alertas
-        tk.Button(config_inner, text="➕ Crear Alerta", 
+        tk.Button(botones_clima, text="➕ Crear Alerta", 
                  command=self.crear_alerta, 
-                 bg='#27ae60', fg='white', font=('Arial', 10)).grid(row=4, column=0, padx=5, pady=10)
+                 bg='#27ae60', fg='white', font=('Arial', 10)).grid(row=0, column=0, padx=5)
         
-        tk.Button(config_inner, text="✏️ Editar Alerta", 
+        tk.Button(botones_clima, text="✏️ Editar Alerta", 
                  command=self.editar_alerta, 
-                 bg='#9b59b6', fg='white', font=('Arial', 10)).grid(row=4, column=1, padx=5, pady=10)
+                 bg='#9b59b6', fg='white', font=('Arial', 10)).grid(row=0, column=1, padx=5)
         
-        tk.Button(config_inner, text="✅ Resolver Alerta", 
+        tk.Button(botones_clima, text="✅ Resolver Alerta", 
                  command=self.resolver_alerta, 
-                 bg='#f39c12', fg='white', font=('Arial', 10)).grid(row=4, column=2, padx=5, pady=10)
+                 bg='#f39c12', fg='white', font=('Arial', 10)).grid(row=0, column=2, padx=5)
         
-        tk.Button(config_inner, text="🗑️ Eliminar Alerta", 
+        tk.Button(botones_clima, text="🗑️ Eliminar Alerta", 
                  command=self.eliminar_alerta, 
-                 bg='#e74c3c', fg='white', font=('Arial', 10)).grid(row=4, column=3, padx=5, pady=10)
+                 bg='#e74c3c', fg='white', font=('Arial', 10)).grid(row=0, column=3, padx=5)
         
-        # Segunda fila: Configuración y Detección
-        self.btn_umbrales_ubicacion = tk.Button(config_inner, text="📍 Umbrales por Ubicación", 
+        acciones_clima = tk.Frame(climatic_frame, bg='white')
+        acciones_clima.grid(row=6, column=0, columnspan=2, pady=5, sticky='ew')
+        acciones_clima.columnconfigure((0, 1, 2, 3), weight=1)
+        
+        self.btn_umbrales_ubicacion = tk.Button(acciones_clima, text="📍 Umbrales por Ubicación", 
                  command=self.mostrar_umbrales_por_ubicacion, 
                  bg='#8e44ad', fg='white', font=('Arial', 10))
-        self.btn_umbrales_ubicacion.grid(row=5, column=0, padx=5, pady=10)
+        self.btn_umbrales_ubicacion.grid(row=0, column=0, padx=5, pady=5, sticky='ew')
         
-        tk.Button(config_inner, text="🔍 Detectar Alertas", 
+        tk.Button(acciones_clima, text="🔍 Detectar Alertas", 
                  command=self.detectar_alertas_climaticas_automaticas, 
-                 bg='#e67e22', fg='white', font=('Arial', 10)).grid(row=5, column=1, padx=5, pady=10)
+                 bg='#e67e22', fg='white', font=('Arial', 10)).grid(row=0, column=1, padx=5, pady=5, sticky='ew')
         
-        tk.Button(config_inner, text="🔄 Actualizar Lista", 
+        tk.Button(acciones_clima, text="🔄 Actualizar Lista", 
                  command=self.actualizar_lista_alertas, 
-                 bg='#3498db', fg='white', font=('Arial', 10)).grid(row=5, column=2, padx=5, pady=10)
+                 bg='#3498db', fg='white', font=('Arial', 10)).grid(row=0, column=2, padx=5, pady=5, sticky='ew')
         
-        tk.Button(config_inner, text="🔄 Recargar Sensores", 
+        tk.Button(acciones_clima, text="🔄 Recargar Sensores", 
                  command=self.cargar_sensores_para_alertas, 
-                 bg='#16a085', fg='white', font=('Arial', 10)).grid(row=5, column=3, padx=5, pady=10)
+                 bg='#16a085', fg='white', font=('Arial', 10)).grid(row=0, column=3, padx=5, pady=5, sticky='ew')
         
-        # --- Control de Funcionamiento (lado derecho) ---
-        control_frame = tk.LabelFrame(config_inner, text="Control de Funcionamiento", 
+        # --- Bloque: Alertas de Funcionamiento ---
+        control_frame = tk.LabelFrame(top_frame, text="Alertas de Funcionamiento", 
                                    font=('Arial', 12, 'bold'), bg='white')
-        control_frame.grid(row=0, column=4, rowspan=6, padx=20, pady=5, sticky='n')
+        control_frame.pack(side='left', fill='both', expand=False, padx=5, pady=5)
 
         tk.Label(control_frame, text="Sensor:", bg='white').grid(row=0, column=0, padx=5, pady=5, sticky='w')
         self.combo_sensor_control = ttk.Combobox(control_frame, width=30)
         self.combo_sensor_control.grid(row=0, column=1, padx=5, pady=5)
 
         tk.Label(control_frame, text="Fecha de Revisión:", bg='white').grid(row=1, column=0, padx=5, pady=5, sticky='w')
-        self.entry_fecha_control = tk.Entry(control_frame, width=20)
+        self.entry_fecha_control = DateEntry(control_frame, width=18, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_control.set_date(datetime.now())
         self.entry_fecha_control.grid(row=1, column=1, padx=5, pady=5)
-        self.entry_fecha_control.insert(0, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
         tk.Label(control_frame, text="Estado del Sensor:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
-        self.combo_estado_sensor = ttk.Combobox(control_frame, values=["OK", "Falla"], width=18, state='readonly')
-        self.combo_estado_sensor.grid(row=2, column=1, padx=5, pady=5)
-        self.combo_estado_sensor.set("OK")
+        self.combo_estado_control = ttk.Combobox(control_frame, values=["Activo", "Mantenimiento"], width=18, state='readonly')
+        self.combo_estado_control.grid(row=2, column=1, padx=5, pady=5)
+        self.combo_estado_control.set("Activo")
 
         tk.Label(control_frame, text="Observaciones:", bg='white').grid(row=3, column=0, padx=5, pady=5, sticky='nw')
         self.txt_obs_control = tk.Text(control_frame, width=30, height=4)
@@ -1006,8 +841,12 @@ Para soporte técnico, contacta al administrador del sistema.
                  command=self.registrar_control_funcionamiento,
                  bg='#2ecc71', fg='white', font=('Arial', 10)).grid(row=4, column=1, padx=5, pady=10, sticky='e')
 
+        # Estado del umbral actual (valor numérico según selección)
+        self.umbral_actual_alerta = None
+
         # Cargar sensores para el combo de control
         self.cargar_sensores_para_alertas()
+        self.actualizar_umbral_climatico()
 
         # Lista de alertas
         lista_frame = tk.LabelFrame(tab, text="📊 Log de Alertas del Sistema", 
@@ -1275,6 +1114,7 @@ Para soporte técnico, contacta al administrador del sistema.
             alerta_data = {
                 "alert_id": alert_id,
                 "sensor_id": sensor_id,
+                "sensor_display": self.obtener_display_sensor(sensor_id),
                 "categoria": "Climática",
                 "type": tipo_alerta,
                 "severity": severity,
@@ -1680,7 +1520,10 @@ Para soporte técnico, contacta al administrador del sistema.
                 umbrales_actuales = self.mongodb_service.obtener_umbrales_ubicacion(ciudad_predefinida, pais_predefinido)
             
             if umbrales_actuales:
-                thresholds = umbrales_actuales.get("thresholds", {})
+                if isinstance(umbrales_actuales, dict) and "thresholds" in umbrales_actuales:
+                    thresholds = umbrales_actuales.get("thresholds", {})
+                else:
+                    thresholds = umbrales_actuales or {}
                 temp_config = thresholds.get("Temperatura", {})
                 hum_config = thresholds.get("Humedad", {})
                 
@@ -1759,181 +1602,6 @@ Para soporte técnico, contacta al administrador del sistema.
             self.agregar_log(f"❌ Error abriendo ventana de configuración: {e}")
             messagebox.showerror("Error", f"Error abriendo configuración: {e}")
     
-    def configurar_tab_visualizar(self, tab):
-        """Configurar pestaña de visualización de umbrales"""
-        try:
-            # Información sobre cómo funcionan los umbrales
-            info_frame = tk.LabelFrame(tab, text="ℹ️ Información", 
-                                     font=('Arial', 12, 'bold'), bg='white')
-            info_frame.pack(fill='x', padx=10, pady=10)
-            
-            info_text = """
-🌍 Los umbrales climáticos se configuran por CIUDAD y PAÍS:
-• Cada sensor tiene una ubicación (ciudad, país)
-• Los umbrales se aplican automáticamente según la ubicación del sensor
-• Se pueden configurar umbrales globales (para todas las ubicaciones)
-• Se pueden configurar umbrales específicos por sensor
-
-📊 Jerarquía de umbrales:
-1. Umbrales específicos del sensor (si existen)
-2. Umbrales globales (si no hay específicos)
-3. Umbrales por defecto (si no hay configuración)
-
-🔍 El botón "Detectar Alertas" analiza TODAS las mediciones:
-• Revisa cada medición de cada sensor
-• Compara con los umbrales configurados
-• Crea alertas automáticas si se exceden los límites
-            """
-            
-            tk.Label(info_frame, text=info_text, font=('Arial', 10), 
-                    bg='white', justify='left').pack(padx=10, pady=10)
-            
-            # Mostrar umbrales actuales
-            umbrales_frame = tk.LabelFrame(tab, text="📋 Umbrales Actuales", 
-                                         font=('Arial', 12, 'bold'), bg='white')
-            umbrales_frame.pack(fill='both', expand=True, padx=10, pady=10)
-            
-            # Treeview para mostrar umbrales
-            columns = ("Ubicación", "Sensor", "Temperatura Min", "Temperatura Max", "Humedad Min", "Humedad Max", "Tipo")
-            self.tree_umbrales_visualizar = ttk.Treeview(umbrales_frame, columns=columns, show="headings")
-            
-            # Configurar columnas
-            self.tree_umbrales_visualizar.heading("Ubicación", text="Ubicación")
-            self.tree_umbrales_visualizar.heading("Sensor", text="Sensor")
-            self.tree_umbrales_visualizar.heading("Temperatura Min", text="Temp Min (°C)")
-            self.tree_umbrales_visualizar.heading("Temperatura Max", text="Temp Max (°C)")
-            self.tree_umbrales_visualizar.heading("Humedad Min", text="Hum Min (%)")
-            self.tree_umbrales_visualizar.heading("Humedad Max", text="Hum Max (%)")
-            self.tree_umbrales_visualizar.heading("Tipo", text="Tipo")
-            
-            self.tree_umbrales_visualizar.column("Ubicación", width=150)
-            self.tree_umbrales_visualizar.column("Sensor", width=120)
-            self.tree_umbrales_visualizar.column("Temperatura Min", width=100)
-            self.tree_umbrales_visualizar.column("Temperatura Max", width=100)
-            self.tree_umbrales_visualizar.column("Humedad Min", width=100)
-            self.tree_umbrales_visualizar.column("Humedad Max", width=100)
-            self.tree_umbrales_visualizar.column("Tipo", width=100)
-            
-            # Scrollbar
-            scrollbar_umbrales = ttk.Scrollbar(umbrales_frame, orient="vertical", command=self.tree_umbrales_visualizar.yview)
-            self.tree_umbrales_visualizar.configure(yscrollcommand=scrollbar_umbrales.set)
-            
-            self.tree_umbrales_visualizar.pack(side="left", fill="both", expand=True)
-            scrollbar_umbrales.pack(side="right", fill="y")
-            
-            # Cargar umbrales
-            self.cargar_umbrales_en_treeview(self.tree_umbrales_visualizar)
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error configurando tab visualizar: {e}")
-    
-    def configurar_tab_configurar(self, tab):
-        """Configurar pestaña de configuración de umbrales"""
-        try:
-            # Usar la funcionalidad existente de configurar_umbrales pero en esta pestaña
-            # Frame para configuración
-            config_frame = tk.LabelFrame(tab, text="⚙️ Configuración de Umbrales", 
-                                       font=('Arial', 12, 'bold'), bg='white')
-            config_frame.pack(fill='x', padx=10, pady=10)
-            
-            # Frame interno para la configuración
-            config_inner = tk.Frame(config_frame, bg='white')
-            config_inner.pack(fill='x', padx=10, pady=10)
-            
-            # Tipo de configuración
-            tk.Label(config_inner, text="Tipo de configuración:", bg='white', font=('Arial', 10, 'bold')).pack(anchor='w')
-            
-            self.config_type_var = tk.StringVar(value="ubicacion")
-            config_type_frame = tk.Frame(config_inner, bg='white')
-            config_type_frame.pack(fill='x', pady=5)
-            
-            tk.Radiobutton(config_type_frame, text="🌍 Umbrales Globales", 
-                          variable=self.config_type_var, value="global", 
-                          command=self.cambiar_tipo_configuracion, bg='white').pack(side='left', padx=5)
-            
-            tk.Radiobutton(config_type_frame, text="📍 Umbrales por Ubicación", 
-                          variable=self.config_type_var, value="ubicacion", 
-                          command=self.cambiar_tipo_configuracion, bg='white').pack(side='left', padx=5)
-            
-            # Selector de ubicación
-            ubicacion_frame = tk.Frame(config_inner, bg='white')
-            ubicacion_frame.pack(fill='x', pady=5)
-            
-            tk.Label(ubicacion_frame, text="Ciudad:", bg='white').pack(side='left', padx=5)
-            self.entry_ciudad_umbrales = tk.Entry(ubicacion_frame, width=20)
-            self.entry_ciudad_umbrales.pack(side='left', padx=5)
-            
-            tk.Label(ubicacion_frame, text="País:", bg='white').pack(side='left', padx=5)
-            self.entry_pais_umbrales = tk.Entry(ubicacion_frame, width=20)
-            self.entry_pais_umbrales.pack(side='left', padx=5)
-            
-            # Cargar ubicaciones disponibles
-            self.cargar_ubicaciones_para_umbrales()
-            
-            # Frame para umbrales
-            self.umbrales_frame = tk.Frame(config_inner, bg='white')
-            self.umbrales_frame.pack(fill='x', pady=10)
-            
-            # Crear interfaz de umbrales
-            self.crear_interfaz_umbrales()
-            
-            # Botones de configuración
-            button_config_frame = tk.Frame(config_inner, bg='white')
-            button_config_frame.pack(fill='x', pady=10)
-            
-            tk.Button(button_config_frame, text="💾 Guardar Configuración", 
-                     command=self.guardar_configuracion_umbrales, 
-                     bg='#27ae60', fg='white', font=('Arial', 10)).pack(side='left', padx=5)
-            
-            tk.Button(button_config_frame, text="🔄 Cargar Actual", 
-                     command=self.cargar_configuracion_actual, 
-                     bg='#3498db', fg='white', font=('Arial', 10)).pack(side='left', padx=5)
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error configurando tab configurar: {e}")
-    
-    def configurar_tab_historial(self, tab):
-        """Configurar pestaña de historial de cambios"""
-        try:
-            # Frame para historial
-            historial_frame = tk.LabelFrame(tab, text="📊 Historial de Cambios de Umbrales", 
-                                          font=('Arial', 12, 'bold'), bg='white')
-            historial_frame.pack(fill='both', expand=True, padx=10, pady=10)
-            
-            # Treeview para historial
-            columns = ("Fecha", "Usuario", "Tipo", "Sensor/Global", "Cambio", "Valores Anteriores", "Valores Nuevos")
-            self.tree_historial = ttk.Treeview(historial_frame, columns=columns, show="headings")
-            
-            # Configurar columnas
-            self.tree_historial.heading("Fecha", text="Fecha")
-            self.tree_historial.heading("Usuario", text="Usuario")
-            self.tree_historial.heading("Tipo", text="Tipo")
-            self.tree_historial.heading("Sensor/Global", text="Sensor/Global")
-            self.tree_historial.heading("Cambio", text="Cambio")
-            self.tree_historial.heading("Valores Anteriores", text="Valores Anteriores")
-            self.tree_historial.heading("Valores Nuevos", text="Valores Nuevos")
-            
-            self.tree_historial.column("Fecha", width=120)
-            self.tree_historial.column("Usuario", width=100)
-            self.tree_historial.column("Tipo", width=100)
-            self.tree_historial.column("Sensor/Global", width=120)
-            self.tree_historial.column("Cambio", width=150)
-            self.tree_historial.column("Valores Anteriores", width=150)
-            self.tree_historial.column("Valores Nuevos", width=150)
-            
-            # Scrollbar
-            scrollbar_historial = ttk.Scrollbar(historial_frame, orient="vertical", command=self.tree_historial.yview)
-            self.tree_historial.configure(yscrollcommand=scrollbar_historial.set)
-            
-            self.tree_historial.pack(side="left", fill="both", expand=True)
-            scrollbar_historial.pack(side="right", fill="y")
-            
-            # Cargar historial
-            self.actualizar_historial_umbrales()
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error configurando tab historial: {e}")
-    
     def cargar_ubicaciones_para_umbrales(self):
         """Cargar ubicaciones disponibles para configuración de umbrales"""
         try:
@@ -1979,22 +1647,6 @@ Para soporte técnico, contacta al administrador del sistema.
                 self.entry_pais_umbrales.insert(0, pais)
         except Exception as e:
             self.agregar_log(f"❌ Error seleccionando ubicación: {e}")
-    
-    def actualizar_todas_las_pestanas(self, notebook):
-        """Actualizar todas las pestañas"""
-        try:
-            # Actualizar pestaña de visualización
-            if hasattr(self, 'tree_umbrales_visualizar'):
-                self.cargar_umbrales_en_treeview(self.tree_umbrales_visualizar)
-            
-            # Actualizar pestaña de historial
-            if hasattr(self, 'tree_historial'):
-                self.actualizar_historial_umbrales()
-            
-            self.agregar_log("✅ Todas las pestañas actualizadas")
-            
-        except Exception as e:
-            self.agregar_log(f"❌ Error actualizando pestañas: {e}")
     
     def cargar_umbrales_en_treeview(self, tree_umbrales):
         """Cargar umbrales en el TreeView"""
@@ -2629,6 +2281,7 @@ Para soporte técnico, contacta al administrador del sistema.
                 tipo_icono = "🌡️" if categoria == "Climática" else "🔧"
                 
                 # Ubicación o sensor
+                sensor_display = alerta.get('sensor_display') or alerta.get('sensor_id', 'N/A')
                 if categoria == "Climática":
                     # Para alertas climáticas, mostrar ubicación
                     location = alerta.get('location', {})
@@ -2638,9 +2291,11 @@ Para soporte técnico, contacta al administrador del sistema.
                         ubicacion = f"{ciudad}, {pais}"
                     else:
                         ubicacion = str(location)
+                    if not ubicacion or ubicacion.strip() in {"", "N/A", "N/A, N/A"}:
+                        ubicacion = sensor_display
                 else:
                     # Para alertas de sensor, mostrar sensor ID
-                    ubicacion = alerta.get('sensor_id', 'N/A')
+                    ubicacion = sensor_display
                 
                 # Descripción mejorada
                 descripcion = alerta.get('message', '')
@@ -2751,8 +2406,130 @@ Para soporte técnico, contacta al administrador del sistema.
                 if nombres_sensores:
                     self.combo_sensor_control.set(nombres_sensores[0])
             
+            # Actualizar umbral mostrado si corresponde
+            if hasattr(self, 'combo_tipo_alerta'):
+                self.actualizar_umbral_climatico()
+            
         except Exception as e:
             self.agregar_log(f"❌ Error cargando sensores para alertas: {e}")
+
+    def obtener_ciudad_pais_sensor(self, sensor_id):
+        """Obtener ciudad y país asociados a un sensor"""
+        ciudad = ""
+        pais = ""
+        try:
+            if not self.mongodb_service or not self.mongodb_service.conectado:
+                return ciudad, pais
+
+            sensores = self.mongodb_service.obtener_sensores()
+            for sensor in sensores:
+                if sensor.get('sensor_id') != sensor_id:
+                    continue
+
+                location = sensor.get('location', {})
+                if isinstance(location, dict):
+                    ciudad = location.get('city', '') or ""
+                    pais = location.get('country', '') or ""
+                elif isinstance(location, str):
+                    if ' - ' in location:
+                        partes = location.split(' - ')
+                        pais = partes[-1].strip()
+                        ciudad_zona = partes[0].strip()
+                        if ', ' in ciudad_zona:
+                            ciudad = ciudad_zona.split(', ', 1)[0].strip()
+                        else:
+                            ciudad = ciudad_zona
+                break
+        except Exception as exc:
+            self.agregar_log(f"⚠️ No se pudo obtener ubicación del sensor {sensor_id}: {exc}")
+
+        return ciudad, pais
+
+    def obtener_display_sensor(self, sensor_id):
+        """Obtener el texto formateado del sensor a partir de su ID."""
+        try:
+            if not sensor_id:
+                return ""
+            if not self.mongodb_service or not self.mongodb_service.conectado:
+                return sensor_id
+
+            sensores = self.mongodb_service.obtener_sensores()
+            for sensor in sensores:
+                if sensor.get('sensor_id') == sensor_id:
+                    return self.formatear_nombre_sensor(sensor)
+        except Exception as exc:
+            self.agregar_log(f"⚠️ No se pudo obtener display del sensor {sensor_id}: {exc}")
+        return sensor_id
+
+    def normalizar_valor_umbral(self, valor):
+        """Convertir valores almacenados a float para usarlos como umbrales."""
+        if valor is None:
+            return None
+        try:
+            if Decimal128 is not None and isinstance(valor, Decimal128):
+                valor = valor.to_decimal()
+            if isinstance(valor, Decimal):
+                return float(valor)
+            if isinstance(valor, (int, float)):
+                return float(valor)
+            if isinstance(valor, str):
+                valor = valor.replace(',', '.').strip()
+                if not valor:
+                    return None
+                return float(valor)
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+        return None
+
+    def obtener_umbral_para_tipo(self, thresholds, tipo_alerta):
+        """Determinar el valor de umbral según el tipo de alerta"""
+        try:
+            temp_cfg = (thresholds or {}).get("Temperatura", {})
+            hum_cfg = (thresholds or {}).get("Humedad", {})
+        except AttributeError:
+            temp_cfg = {}
+            hum_cfg = {}
+
+        mapping = {
+            "Temperatura Alta": temp_cfg.get("max"),
+            "Temperatura Baja": temp_cfg.get("min"),
+            "Humedad Alta": hum_cfg.get("max"),
+            "Humedad Baja": hum_cfg.get("min"),
+        }
+        valor = mapping.get(tipo_alerta)
+        return self.normalizar_valor_umbral(valor)
+
+    def actualizar_umbral_climatico(self, event=None):
+        """Actualizar el umbral mostrado según sensor y tipo seleccionados"""
+        try:
+            if not self.mongodb_service or not self.mongodb_service.conectado:
+                return
+
+            sensor_seleccionado = self.combo_sensor_alerta.get() if hasattr(self, 'combo_sensor_alerta') else ""
+            sensor_id = self.extraer_sensor_id_del_formato(sensor_seleccionado) if sensor_seleccionado else ""
+            tipo_alerta = self.combo_tipo_alerta.get() if hasattr(self, 'combo_tipo_alerta') else ""
+
+            self.umbral_actual_alerta = None
+            
+            if not sensor_id or not tipo_alerta:
+                return
+
+            thresholds = self.mongodb_service.obtener_umbrales_efectivos_por_ubicacion(sensor_id)
+
+            if not thresholds:
+                ciudad, pais = self.obtener_ciudad_pais_sensor(sensor_id)
+                if ciudad and pais:
+                    thresholds = self.mongodb_service.obtener_umbrales_ubicacion(ciudad, pais) or {}
+
+            umbral_valor = self.obtener_umbral_para_tipo(thresholds, tipo_alerta)
+
+            if umbral_valor is not None:
+                self.umbral_actual_alerta = float(umbral_valor)
+            else:
+                self.umbral_actual_alerta = None
+
+        except Exception as exc:
+            self.agregar_log(f"❌ Error actualizando umbral climático: {exc}")
 
     def registrar_control_funcionamiento(self):
         """Registrar control de funcionamiento y disparar alerta de sensor si corresponde"""
@@ -2762,13 +2539,22 @@ Para soporte técnico, contacta al administrador del sistema.
                 return
 
             sensor_display = self.combo_sensor_control.get().strip() if hasattr(self, 'combo_sensor_control') else ''
-            estado_sensor = self.combo_estado_sensor.get().strip() if hasattr(self, 'combo_estado_sensor') else ''
-            fecha_rev = self.entry_fecha_control.get().strip() if hasattr(self, 'entry_fecha_control') else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            estado_sensor = self.combo_estado_control.get().strip() if hasattr(self, 'combo_estado_control') else ''
+            fecha_rev = self.obtener_valor_fecha(self.entry_fecha_control) if hasattr(self, 'entry_fecha_control') else datetime.now().strftime("%Y-%m-%d")
             observaciones = self.txt_obs_control.get("1.0", tk.END).strip() if hasattr(self, 'txt_obs_control') else ''
 
             if not sensor_display or not estado_sensor:
                 messagebox.showerror("Error", "Seleccione sensor y estado del sensor")
                 return
+
+            estado_control = estado_sensor.lower()
+            estado_normalizado = {
+                "ok": "activo",
+                "falla": "mantenimiento",
+                "activo": "activo",
+                "inactivo": "inactivo",
+                "mantenimiento": "mantenimiento"
+            }.get(estado_control, estado_control)
 
             # Mapear display a sensor_id intentando buscar por nombre
             sensor_id = None
@@ -2783,7 +2569,8 @@ Para soporte técnico, contacta al administrador del sistema.
                 "control_id": control_id,
                 "sensor_id": sensor_id or sensor_display,
                 "reviewed_at": fecha_rev,
-                "sensor_state": estado_sensor.lower(),
+                "sensor_state": estado_normalizado,
+                "control_state": estado_control,
                 "observations": observaciones,
                 "reviewed_by": getattr(self, 'usuario_autenticado', None)
             }
@@ -2791,8 +2578,17 @@ Para soporte técnico, contacta al administrador del sistema.
             if self.mongodb_service.crear_control(control_data):
                 self.agregar_log(f"📝 Control registrado para {sensor_display}")
 
+                if sensor_id:
+                    datos_actualizados = {
+                        "status": estado_normalizado,
+                        "updated_at": datetime.now().isoformat()
+                    }
+                    if self.mongodb_service.actualizar_sensor(sensor_id, datos_actualizados):
+                        self.agregar_log(f"🔄 Estado del sensor '{sensor_id}' actualizado a {estado_normalizado}")
+                        self.actualizar_lista_sensores()
+
                 # Disparar alerta de tipo sensor si hay falla
-                if estado_sensor.lower() == 'falla':
+                if estado_normalizado != 'activo':
                     alert_id = f"ALERT_SENS_{int(time.time())}"
                     alerta_data = {
                         "alert_id": alert_id,
@@ -2844,9 +2640,9 @@ Para soporte técnico, contacta al administrador del sistema.
         self.entry_monto_factura.grid(row=1, column=1, padx=5, pady=5)
         
         tk.Label(config_inner, text="Fecha Vencimiento:", bg='white').grid(row=1, column=2, padx=5, pady=5, sticky='w')
-        self.entry_fecha_vencimiento = tk.Entry(config_inner, width=20)
+        self.entry_fecha_vencimiento = DateEntry(config_inner, width=18, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_vencimiento.set_date(datetime.now() + timedelta(days=30))
         self.entry_fecha_vencimiento.grid(row=1, column=3, padx=5, pady=5)
-        self.entry_fecha_vencimiento.insert(0, (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"))
         
         # Botones
         tk.Button(config_inner, text="📄 Generar Factura", 
@@ -4204,14 +4000,14 @@ Para soporte técnico, contacta al administrador del sistema.
         
         # Fila 3: Fechas
         tk.Label(campos_frame, text="Fecha Inicio:", bg='white').grid(row=2, column=0, padx=5, pady=5, sticky='w')
-        self.entry_fecha_inicio_servicio = tk.Entry(campos_frame, width=15)
+        self.entry_fecha_inicio_servicio = DateEntry(campos_frame, width=15, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_inicio_servicio.set_date(datetime.now() - timedelta(days=30))
         self.entry_fecha_inicio_servicio.grid(row=2, column=1, padx=5, pady=5, sticky='w')
-        self.entry_fecha_inicio_servicio.insert(0, "2024-01-01")
         
         tk.Label(campos_frame, text="Fecha Fin:", bg='white').grid(row=2, column=2, padx=5, pady=5, sticky='w')
-        self.entry_fecha_fin_servicio = tk.Entry(campos_frame, width=15)
+        self.entry_fecha_fin_servicio = DateEntry(campos_frame, width=15, date_pattern="yyyy-MM-dd", state="readonly")
+        self.entry_fecha_fin_servicio.set_date(datetime.now())
         self.entry_fecha_fin_servicio.grid(row=2, column=3, padx=5, pady=5, sticky='w')
-        self.entry_fecha_fin_servicio.insert(0, datetime.now().strftime("%Y-%m-%d"))
         
         # Botones de servicios
         botones_frame = tk.Frame(config_inner, bg='white')
@@ -4366,8 +4162,8 @@ Para soporte técnico, contacta al administrador del sistema.
             pais = self.combo_pais_servicio.get().strip()
             zona = self.combo_zona_servicio.get().strip()
             tipo_sensor = self.combo_tipo_sensor_servicio.get().strip()
-            fecha_inicio = self.entry_fecha_inicio_servicio.get().strip()
-            fecha_fin = self.entry_fecha_fin_servicio.get().strip()
+            fecha_inicio = self.obtener_valor_fecha(self.entry_fecha_inicio_servicio).strip()
+            fecha_fin = self.obtener_valor_fecha(self.entry_fecha_fin_servicio).strip()
             
             if not ciudad or not pais:
                 messagebox.showwarning("Advertencia", "Por favor seleccione una ciudad y país")
@@ -5434,8 +5230,8 @@ Para soporte técnico, contacta al administrador del sistema.
         try:
             # Validar campos
             sensor_seleccionado = self.combo_sensor_servicio.get()
-            fecha_inicio = self.entry_fecha_inicio_servicio.get()
-            fecha_fin = self.entry_fecha_fin_servicio.get()
+            fecha_inicio = self.obtener_valor_fecha(self.entry_fecha_inicio_servicio)
+            fecha_fin = self.obtener_valor_fecha(self.entry_fecha_fin_servicio)
             tipo_servicio = self.combo_tipo_servicio.get()
             
             if not sensor_seleccionado or not fecha_inicio or not fecha_fin or not tipo_servicio:
@@ -7269,28 +7065,61 @@ Datos históricos: {len(mediciones)} mediciones
     def agregar_sensor(self):
         """Agregar nuevo sensor"""
         try:
-            nombre = self.entry_nombre_sensor.get()
-            pais = self.combo_pais_sensor.get()
-            ciudad = self.combo_ciudad_sensor.get()
-            zona = self.combo_zona_sensor.get()
-            tipo = self.combo_tipo_sensor.get()
-            estado = self.combo_estado_sensor.get()
+            nombre = self.entry_nombre_sensor.get().strip()
+            pais = self.combo_pais_sensor.get().strip()
+            ciudad = self.combo_ciudad_sensor.get().strip()
+            zona = self.combo_zona_sensor.get().strip()
+            tipo = self.combo_tipo_sensor.get().strip()
+            estado = self.combo_estado_sensor.get().strip()
             
             if not nombre or not pais or not ciudad:
                 messagebox.showerror("Error", "Por favor complete todos los campos obligatorios (Nombre, País, Ciudad)")
                 return
             
-            # Construir ubicación en formato "Ciudad, Zona - País"
-            if zona and zona != "N/A":
-                ubicacion = f"{ciudad}, {zona} - {pais}"
-            else:
-                ubicacion = f"{ciudad} - {pais}"
+            if not self.mongodb_service or not self.mongodb_service.conectado:
+                messagebox.showerror("Error", "MongoDB Atlas no está conectado")
+                return
             
-            # Crear sensor en MongoDB Atlas
+            ubicacion_datos = {
+                "city": ciudad,
+                "country": pais
+            }
+            if zona and zona.lower() != "n/a":
+                ubicacion_datos["zone"] = zona
+            
+            sensores_existentes = list(self.mongodb_service.obtener_sensores() or [])
+            ids_existentes = {
+                sensor.get('sensor_id') for sensor in sensores_existentes if sensor.get('sensor_id')
+            }
+            
+            # Generar un ID único evitando colisiones
+            while True:
+                sensor_id = f"SEN-{uuid.uuid4().hex[:8].upper()}"
+                if sensor_id not in ids_existentes:
+                    break
+            
+            ubicacion_clave = normalize_location(ubicacion_datos)
+            tipo_clave = tipo.lower()
+            
+            for sensor in sensores_existentes:
+                clave_existente = normalize_location(sensor.get('location'))
+                tipo_existente = str(sensor.get('type', '')).strip().lower()
+                
+                if sensor.get('sensor_id') == sensor_id:
+                    messagebox.showerror("Error", "Ya existe un sensor con el mismo ID. Intente nuevamente.")
+                    return
+                
+                if clave_existente == ubicacion_clave and tipo_existente == tipo_clave:
+                    messagebox.showerror(
+                        "Error",
+                        "Ya existe un sensor del mismo tipo configurado para esta ubicación, con el mismo tipo."
+                    )
+                    return
+            
             sensor_data = {
-                "sensor_id": f"SENSOR_{int(time.time())}",
+                "sensor_id": sensor_id,
                 "name": nombre,
-                "location": ubicacion,
+                "location": ubicacion_datos,
                 "type": tipo,
                 "status": estado.lower(),
                 "created_at": datetime.now().isoformat()
@@ -7307,8 +7136,9 @@ Datos históricos: {len(mediciones)} mediciones
                 self.combo_ciudad_sensor.set("")
                 self.combo_zona_sensor.set("Centro")
                 
+                ubicacion_mensaje = f"{ciudad}, {zona} - {pais}" if zona and zona.lower() != "n/a" else f"{ciudad} - {pais}"
                 messagebox.showinfo("Éxito", "Sensor agregado correctamente")
-                self.agregar_log(f"✅ Sensor agregado: {nombre} en {ubicacion}")
+                self.agregar_log(f"✅ Sensor agregado: {nombre} en {ubicacion_mensaje}")
             else:
                 messagebox.showerror("Error", "MongoDB Atlas no está conectado")
                 
@@ -7426,7 +7256,16 @@ Datos históricos: {len(mediciones)} mediciones
             item = self.tree_sensores.item(seleccionado[0])
             sensor_id = item['values'][0]
             sensor_nombre = item['values'][1]
+            estado_sensor = str(item['values'][4]).strip().lower() if len(item['values']) > 4 else ''
             sensor_tipo = item['values'][3]  # Tipo está en la cuarta columna
+
+            if estado_sensor != 'activo':
+                messagebox.showerror(
+                    "Sensor inactivo",
+                    f"El sensor '{sensor_nombre}' está en estado '{estado_sensor or 'desconocido'}'.\n"
+                    "Solo los sensores activos pueden generar datos de prueba."
+                )
+                return
             
             # Confirmar generación de datos
             respuesta = messagebox.askyesno(
@@ -7876,8 +7715,8 @@ Datos históricos: {len(mediciones)} mediciones
         try:
             ciudad_seleccionada = self.combo_ciudad_analisis.get()
             ciudad = self.extraer_ciudad_del_formato(ciudad_seleccionada)
-            fecha_desde = self.entry_fecha_desde.get()
-            fecha_hasta = self.entry_fecha_hasta.get()
+            fecha_desde = self.obtener_valor_fecha(self.entry_fecha_desde)
+            fecha_hasta = self.obtener_valor_fecha(self.entry_fecha_hasta)
             tipo_analisis = self.combo_tipo_analisis.get()
             
             if not ciudad:
@@ -8123,8 +7962,8 @@ Datos históricos: {len(mediciones)} mediciones
         try:
             ciudad_seleccionada = self.combo_ciudad_analisis.get()
             ciudad = self.extraer_ciudad_del_formato(ciudad_seleccionada)
-            fecha_desde = self.entry_fecha_desde.get()
-            fecha_hasta = self.entry_fecha_hasta.get()
+            fecha_desde = self.obtener_valor_fecha(self.entry_fecha_desde)
+            fecha_hasta = self.obtener_valor_fecha(self.entry_fecha_hasta)
             tipo_analisis = self.combo_tipo_analisis.get()
             
             if not ciudad:
@@ -8197,8 +8036,8 @@ Datos históricos: {len(mediciones)} mediciones
         try:
             ciudad_seleccionada = self.combo_ciudad_analisis.get()
             ciudad = self.extraer_ciudad_del_formato(ciudad_seleccionada)
-            fecha_desde = self.entry_fecha_desde.get()
-            fecha_hasta = self.entry_fecha_hasta.get()
+            fecha_desde = self.obtener_valor_fecha(self.entry_fecha_desde)
+            fecha_hasta = self.obtener_valor_fecha(self.entry_fecha_hasta)
             
             if not ciudad:
                 messagebox.showerror("Error", "Seleccione una ciudad")
@@ -8310,12 +8149,12 @@ Datos históricos: {len(mediciones)} mediciones
         try:
             sensor_seleccionado = self.combo_sensor_alerta.get()
             sensor = self.extraer_sensor_id_del_formato(sensor_seleccionado)
-            categoria = self.combo_categoria_alerta.get()
+            categoria = "Climática"
             tipo = self.combo_tipo_alerta.get()
             severidad = self.combo_severidad_alerta.get()
-            estado = self.combo_estado_alerta.get()
             mensaje = self.entry_mensaje_alerta.get()
-            umbral = self.entry_umbral_alerta.get()
+            umbral = self.umbral_actual_alerta
+            ciudad_alerta, pais_alerta = self.obtener_ciudad_pais_sensor(sensor)
             
             if not sensor or not tipo or not severidad:
                 messagebox.showerror("Error", "Complete todos los campos obligatorios")
@@ -8331,17 +8170,20 @@ Datos históricos: {len(mediciones)} mediciones
             alerta_data = {
                 "alert_id": alert_id,
                 "sensor_id": sensor,
+                "sensor_display": sensor_seleccionado,
                 "categoria": categoria,
                 "type": tipo,
                 "severity": severidad.lower(),
-                "status": estado.lower(),
-                "threshold": float(umbral) if umbral else None,
+                "status": "pendiente",
                 "message": mensaje_final,
                 "created_at": datetime.now().isoformat(),
                 "created_by": self.usuario_autenticado,
                 "updated_at": datetime.now().isoformat(),
                 "updated_by": self.usuario_autenticado
             }
+
+            if ciudad_alerta or pais_alerta:
+                alerta_data["location"] = {"city": ciudad_alerta or "N/A", "country": pais_alerta or "N/A"}
             
             # Diferenciar entre alertas de sensor y climáticas
             if categoria == "Sensor":
@@ -8359,9 +8201,7 @@ Datos históricos: {len(mediciones)} mediciones
                     self.agregar_log(f"✅ Alerta {categoria} creada: {alert_id}")
                     
                     # Limpiar campos
-                    self.entry_umbral_alerta.delete(0, tk.END)
                     self.entry_mensaje_alerta.delete(0, tk.END)
-                    self.combo_estado_alerta.set("Pendiente")
                 else:
                     messagebox.showerror("Error", "No se pudo crear la alerta")
             else:
@@ -8471,17 +8311,17 @@ Datos históricos: {len(mediciones)} mediciones
         try:
             sensor_seleccionado = self.combo_sensor_alerta.get()
             sensor = self.extraer_sensor_id_del_formato(sensor_seleccionado)
-            categoria = self.combo_categoria_alerta.get()
+            categoria = "Climática"
             tipo = self.combo_tipo_alerta.get()
-            umbral = self.entry_umbral_alerta.get()
+            umbral_valor = self.umbral_actual_alerta
+            ciudad_alerta, pais_alerta = self.obtener_ciudad_pais_sensor(sensor)
             
-            if not sensor or not tipo or not umbral:
-                messagebox.showerror("Error", "Complete sensor, tipo y umbral para disparar alerta")
+            if not sensor or not tipo:
+                messagebox.showerror("Error", "Seleccione un sensor y tipo de alerta")
                 return
             
             # Obtener lectura real del sensor
             valor_actual = self.obtener_lectura_sensor_con_fallback(sensor, tipo)
-            umbral_valor = float(umbral)
             
             if valor_actual is None:
                 messagebox.showerror("Error", "No se pudo obtener lectura del sensor")
@@ -8491,16 +8331,16 @@ Datos históricos: {len(mediciones)} mediciones
             alerta_disparada = False
             mensaje_alerta = ""
             
-            if tipo == "Temperatura Alta" and valor_actual > umbral_valor:
+            if umbral_valor is not None and tipo == "Temperatura Alta" and valor_actual > umbral_valor:
                 alerta_disparada = True
                 mensaje_alerta = f"Temperatura crítica: {valor_actual}°C (umbral: {umbral_valor}°C)"
-            elif tipo == "Temperatura Baja" and valor_actual < umbral_valor:
+            elif umbral_valor is not None and tipo == "Temperatura Baja" and valor_actual < umbral_valor:
                 alerta_disparada = True
                 mensaje_alerta = f"Temperatura baja: {valor_actual}°C (umbral: {umbral_valor}°C)"
-            elif tipo == "Humedad Alta" and valor_actual > umbral_valor:
+            elif umbral_valor is not None and tipo == "Humedad Alta" and valor_actual > umbral_valor:
                 alerta_disparada = True
                 mensaje_alerta = f"Humedad alta: {valor_actual}% (umbral: {umbral_valor}%)"
-            elif tipo == "Humedad Baja" and valor_actual < umbral_valor:
+            elif umbral_valor is not None and tipo == "Humedad Baja" and valor_actual < umbral_valor:
                 alerta_disparada = True
                 mensaje_alerta = f"Humedad baja: {valor_actual}% (umbral: {umbral_valor}%)"
             
@@ -8511,6 +8351,7 @@ Datos históricos: {len(mediciones)} mediciones
                 alerta_data = {
                     "alert_id": alert_id,
                     "sensor_id": sensor,
+                    "sensor_display": sensor_seleccionado or self.obtener_display_sensor(sensor),
                     "categoria": categoria,
                     "type": tipo,
                     "severity": "alta",  # Alertas manuales son de alta severidad
@@ -8525,6 +8366,9 @@ Datos históricos: {len(mediciones)} mediciones
                     "resolucion_manual": True,
                     "auto_resolucion": False
                 }
+
+                if ciudad_alerta or pais_alerta:
+                    alerta_data["location"] = {"city": ciudad_alerta or "N/A", "country": pais_alerta or "N/A"}
                 
                 # Guardar en MongoDB
                 if self.mongodb_service and self.mongodb_service.conectado:
@@ -9167,7 +9011,7 @@ Datos históricos: {len(mediciones)} mediciones
             usuario_factura = self.combo_usuario_factura.get()
             servicio = self.combo_servicio_factura.get()
             monto_str = self.entry_monto_factura.get()
-            fecha_vencimiento = self.entry_fecha_vencimiento.get()
+            fecha_vencimiento = self.obtener_valor_fecha(self.entry_fecha_vencimiento)
             
             if not all([usuario_factura, servicio, monto_str, fecha_vencimiento]):
                 messagebox.showerror("Error", "Complete todos los campos")
@@ -10854,8 +10698,8 @@ Datos históricos: {len(mediciones)} mediciones
             # Obtener parámetros del informe
             tipo_informe = self.combo_tipo_informe.get()
             pais_ciudad = self.combo_pais_ciudad_informe.get()
-            fecha_inicio = self.entry_fecha_inicio.get()
-            fecha_fin = self.entry_fecha_fin.get()
+            fecha_inicio = self.obtener_valor_fecha(self.entry_fecha_inicio)
+            fecha_fin = self.obtener_valor_fecha(self.entry_fecha_fin)
             agrupacion = self.combo_agrupacion.get()
             
             if not all([tipo_informe, pais_ciudad, fecha_inicio, fecha_fin]):
@@ -11586,12 +11430,14 @@ Datos históricos: {len(mediciones)} mediciones
             combo_parametros.set("temperatura_humedad")
             
             tk.Label(campos_frame, text="Fecha Inicio:", bg='white', font=('Arial', 10, 'bold')).grid(row=6, column=0, padx=5, pady=5, sticky='w')
-            entry_fecha_inicio = tk.Entry(campos_frame, width=40, font=('Arial', 10))
+            entry_fecha_inicio = DateEntry(campos_frame, width=18, date_pattern="yyyy-MM-dd", state="readonly")
+            entry_fecha_inicio.set_date(datetime.now() - timedelta(days=30))
             entry_fecha_inicio.grid(row=6, column=1, padx=5, pady=5, sticky='ew')
             tk.Label(campos_frame, text="Formato: YYYY-MM-DD", bg='white', font=('Arial', 8), fg='gray').grid(row=7, column=1, padx=5, pady=0, sticky='w')
             
             tk.Label(campos_frame, text="Fecha Fin:", bg='white', font=('Arial', 10, 'bold')).grid(row=8, column=0, padx=5, pady=5, sticky='w')
-            entry_fecha_fin = tk.Entry(campos_frame, width=40, font=('Arial', 10))
+            entry_fecha_fin = DateEntry(campos_frame, width=18, date_pattern="yyyy-MM-dd", state="readonly")
+            entry_fecha_fin.set_date(datetime.now())
             entry_fecha_fin.grid(row=8, column=1, padx=5, pady=5, sticky='ew')
             tk.Label(campos_frame, text="Formato: YYYY-MM-DD", bg='white', font=('Arial', 8), fg='gray').grid(row=9, column=1, padx=5, pady=0, sticky='w')
             
@@ -11606,8 +11452,8 @@ Datos históricos: {len(mediciones)} mediciones
                 ubicacion = combo_ubicacion.get().strip()
                 agrupacion = combo_agrupacion.get().strip().lower()
                 parametros = combo_parametros.get().strip()
-                fecha_inicio = entry_fecha_inicio.get().strip()
-                fecha_fin = entry_fecha_fin.get().strip()
+                fecha_inicio = self.obtener_valor_fecha(entry_fecha_inicio).strip()
+                fecha_fin = self.obtener_valor_fecha(entry_fecha_fin).strip()
                 
                 if not nombre or not tipo or not ubicacion or ubicacion == "Seleccione una ubicación" or not fecha_inicio or not fecha_fin:
                     messagebox.showerror("Error", "Por favor complete todos los campos obligatorios y seleccione una ubicación")
@@ -13442,19 +13288,19 @@ Sensor analizado: {sensor_name}
             combo_estado.set("Todos")
             
             tk.Label(controles_frame, text="Fecha desde:", bg='white').grid(row=0, column=3, padx=5, pady=5, sticky='w')
-            entry_fecha_desde = tk.Entry(controles_frame, width=12)
+            entry_fecha_desde = DateEntry(controles_frame, width=12, date_pattern="yyyy-MM-dd", state="readonly")
+            entry_fecha_desde.set_date(datetime.now() - timedelta(days=30))
             entry_fecha_desde.grid(row=0, column=4, padx=5, pady=5)
-            entry_fecha_desde.insert(0, (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"))
             
             tk.Label(controles_frame, text="Fecha hasta:", bg='white').grid(row=0, column=5, padx=5, pady=5, sticky='w')
-            entry_fecha_hasta = tk.Entry(controles_frame, width=12)
+            entry_fecha_hasta = DateEntry(controles_frame, width=12, date_pattern="yyyy-MM-dd", state="readonly")
+            entry_fecha_hasta.set_date(datetime.now())
             entry_fecha_hasta.grid(row=0, column=6, padx=5, pady=5)
-            entry_fecha_hasta.insert(0, datetime.now().strftime("%Y-%m-%d"))
             
             def aplicar_filtros():
                 estado_filtro = combo_estado.get()
-                fecha_desde = entry_fecha_desde.get()
-                fecha_hasta = entry_fecha_hasta.get()
+                fecha_desde = self.obtener_valor_fecha(entry_fecha_desde)
+                fecha_hasta = self.obtener_valor_fecha(entry_fecha_hasta)
                 
                 # Limpiar tabla
                 for item in tree_historial.get_children():
